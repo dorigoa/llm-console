@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "llm-console-dry-run",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "LLM_CONSOLE_DRY_RUN=1",
+        "uv", "run", "uvicorn", "--factory", "app.main:create_app",
+        "--host", "127.0.0.1", "--port", "8765", "--reload"
+      ],
+      "port": 8765
+    }
+  ]
+}

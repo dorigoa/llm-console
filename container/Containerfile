@@ -1,0 +1,58 @@
+# llm-console image: the FastAPI app (app/) and the static page (static/) on
+# Python 3.13 (Alpine), run as the host user (same name, UID and GID) so that the
+# mounted ssh key is readable.
+#
+# Build:   container/build.sh     -> image llm-console:latest (`container` on macOS, podman on Linux)
+# Service: container/install.sh   -> Quadlet unit on raspy, 127.0.0.1:80 -> 8080
+#
+# The build context is the repository root (see .dockerignore). No ssh key goes
+# into the image: llm-console.container mounts it read-only in /run/host-ssh/nodes
+# and entrypoint.sh copies it into ~/.ssh.
+
+# Fully qualified name: podman cannot resolve short names without a default registry.
+FROM docker.io/library/python:3.13-alpine
+
+# openssh-client: every Run/Stop is an ssh command. tini (PID 1): forwards
+# signals and reaps the ssh processes.
+RUN apk add --no-cache openssh-client tini
+
+# Host user: build.sh passes the values from `id`.
+ARG USER_NAME=alvise
+ARG USER_UID=1000
+ARG USER_GID=1000
+
+# If the GID already exists in the image (20 is "dialout" in Alpine), the user joins that group.
+RUN set -e; \
+    group="$(awk -F: -v gid="$USER_GID" '$3 == gid { print $1; exit }' /etc/group)"; \
+    if [ -z "$group" ]; then group="$USER_NAME"; addgroup -g "$USER_GID" "$group"; fi; \
+    adduser -D -s /bin/sh -h "/home/$USER_NAME" -u "$USER_UID" -G "$group" "$USER_NAME"
+
+# Dependencies (pinned, from `uv export`): rebuilt only when requirements.txt changes.
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --root-user-action=ignore -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
+
+COPY --chmod=755 container/entrypoint.sh /usr/local/bin/entrypoint.sh
+
+WORKDIR /app
+COPY app/ /app/app/
+COPY static/ /app/static/
+# Default config; the Quadlet unit mounts ~/llm-console/config.yaml over it.
+COPY config.yaml /app/config.yaml
+
+USER ${USER_NAME}
+
+# The checkout the image was built from (git describe, "-dirty" with uncommitted
+# changes): shown in the page footer and in `printenv LLM_CONSOLE_VERSION`.
+ARG LLM_CONSOLE_VERSION=unknown
+LABEL org.opencontainers.image.title="llm-console" \
+      org.opencontainers.image.revision="${LLM_CONSOLE_VERSION}"
+ENV LLM_CONSOLE_VERSION=${LLM_CONSOLE_VERSION} \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+EXPOSE 8080
+
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]
+# No access log: the page polls running jobs every 2 s. Jobs are logged by the app.
+CMD ["uvicorn", "--factory", "app.main:create_app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]

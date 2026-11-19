@@ -1,0 +1,40 @@
+# systemd unit (Quadlet, rootless podman) that runs llm-console in a container on
+# raspy: starts it at boot even without a login (lingering required) and
+# restarts it if it fails.
+#
+# Install and update: container/install.sh (builds, copies this unit into
+# ~/.config/containers/systemd and restarts the service); from the Mac: ./deploy.sh.
+# Needs net.ipv4.ip_unprivileged_port_start <= 80 (rootless podman binding port 80).
+# Logs:   journalctl --user-unit llm-console -f   (or podman logs -f llm-console)
+# Shell:  podman exec -it llm-console sh
+#
+# The mounts are single files: after replacing one on the host (e.g. ssh-keygen -R
+# rewrites known_hosts), restart the service so the container sees the new file.
+
+[Unit]
+Description=llm-console in a podman container
+
+[Container]
+Image=localhost/llm-console:latest
+ContainerName=llm-console
+# Same UID inside and outside, otherwise the user cannot read the mounted key.
+UserNS=keep-id
+# Only on loopback: Tailscale serve (https://ai.exocomet-boga.ts.net) forwards to it.
+PublishPort=127.0.0.1:80:8080
+# Key for the remote hosts, read-only: entrypoint.sh copies it into ~/.ssh.
+Volume=%h/.ssh/id_ecdsa:/run/host-ssh/nodes/id_ecdsa:ro
+Volume=%h/.ssh/id_ecdsa.pub:/run/host-ssh/nodes/id_ecdsa.pub:ro
+# raspy's known_hosts: ssh runs with StrictHostKeyChecking=yes against it.
+Volume=%h/.ssh/known_hosts:/run/host-ssh/known_hosts:ro
+# Hosts, tabs and commands: edit, then `systemctl --user restart llm-console`.
+Volume=%h/llm-console/config.yaml:/app/config.yaml:ro
+
+[Service]
+Restart=on-failure
+RestartSec=5
+# Stopping the container ends llm-console with SIGTERM (exit 143, via tini):
+# that is a normal stop, not a failure.
+SuccessExitStatus=143
+
+[Install]
+WantedBy=default.target

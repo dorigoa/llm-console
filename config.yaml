@@ -1,0 +1,48 @@
+# llm-console: hosts, tabs, sections and the commands they run on the hosts.
+# It is the only source of commands: the browser sends only tab/section/variant ids.
+#
+# A section with no variants cannot Run, one with no stop cannot Stop: the page
+# shows it with the buttons disabled ("da configurare").
+# In the container this file is mounted read-only from ~/llm-console/config.yaml on
+# raspy: after a change, `systemctl --user restart llm-console` (no rebuild needed).
+
+ssh:
+  # As seen inside the container: entrypoint.sh copies the key mounted by the
+  # Quadlet unit into ~/.ssh; known_hosts is raspy's, mounted read-only.
+  identity: ~/.ssh/id_ecdsa
+  known_hosts: /run/host-ssh/known_hosts
+  connect_timeout: 10
+  # Prepended to PATH on the remote host (non-interactive ssh does not read ~/.profile).
+  remote_path_prefix: $HOME/.local/bin
+
+hosts:
+  pc:  { address: 192.168.1.200, user: alvise }
+  mac: { address: 192.168.1.101, user: alvise }
+
+tabs:
+  - id: linux
+    label: Linux
+    host: pc
+    sections:
+      - id: llama-server
+        label: llama-server
+        variants: {}        # D2: commands still to be defined
+        stop: null          # D2
+      - id: strata
+        label: Strata
+        # Run = stop.sh (exit code ignored) then the chosen script: switching model is one click.
+        stop_before_run: true
+        run_timeout: 900    # seconds: model loading can take minutes
+        stop_timeout: 120
+        variants:           # in the order of the radio buttons
+          iq4: ~/Strata/run-unsloth-ud-iq4_xs-v31.sh
+          q4:  ~/Strata/run-unsloth-ud-q4_k_xl.sh
+          q5:  ~/Strata/run-unsloth-ud-q5_k_xl.sh
+          q6:  ~/Strata/run-unsloth-ud-q6_k_xl.sh
+          q8:  ~/Strata/run-unsloth-ud-q8_k_xl.sh
+        stop: ~/Strata/stop.sh
+
+  - id: mac
+    label: Mac
+    host: mac
+    sections: []            # D3: still to be defined
