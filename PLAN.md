@@ -286,7 +286,10 @@ e un runner "dry-run" (`LLM_CONSOLE_DRY_RUN=1` → stampa il comando invece di e
 Run/Stop di Strata provati dall'utente da un laptop sulla tailnet: ok.
 ai-console (deprecato) disabilitato: Quadlet spostato in `~/ai-console.container.disabled` su raspy,
 al boot parte solo `llm-console.service`. Non rilanciare `ai-console/gateway/tailscale-serve.sh`: il suo
-`reset` rimetterebbe la 443 su ai-console. Da fare: prova di reboot. Nota: MacStudio1 non è sulla tailnet.
+`reset` rimetterebbe la 443 su ai-console. Nota: MacStudio1 non è sulla tailnet.
+Prova di reboot (19/11 23:24): `llm-console.service` attivo ~20 s dopo il boot, ai-console assente,
+`ip_unprivileged_port_start=80` persistente, `tailscale serve` 443 → `127.0.0.1:80` e `/healthz` 200 via
+tailnet, ssh dal container al PC ok, nessuna unit in stato failed.
 `./deploy.sh`, poi su raspy (con la porta scelta in D1; serve `sudo` se `alvise` non è operator):
 ```bash
 tailscale serve --bg --https=443 http://127.0.0.1:80
@@ -299,7 +302,7 @@ e aggiornamento di `ai-console/gateway/tailscale-serve.sh` perché un suo `reset
 
 ## 9. Criteri di accettazione
 
-- [ ] `systemctl --user status llm-console` attivo; parte da solo dopo reboot di raspy.
+- [x] `systemctl --user status llm-console` attivo; parte da solo dopo reboot di raspy.
 - [ ] `curl http://127.0.0.1/healthz` su raspy → `ok`; `ss -ltn` mostra `127.0.0.1:80` e **non** 0.0.0.0:80.
 - [ ] `https://ai.exocomet-boga.ts.net` (o la porta di D1) apre la UI da un dispositivo sulla tailnet; non raggiungibile da fuori tailnet.
 - [ ] Tab Linux → Strata → Run → `q4` → Avvia: il job termina `succeeded`, `strata launch --status` sul PC mostra Q4_K_XL, `http://192.168.1.200:8000` risponde.
