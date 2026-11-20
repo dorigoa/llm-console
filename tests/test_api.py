@@ -217,8 +217,8 @@ async def test_unknown_job_is_404(client):
 @pytest.mark.parametrize(("variant", "script"), [
     ("qwen-q8", "./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200"),
     ("qwen-q4", "./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -4bit"),
-    ("gemma-q8", "./run-Gemma-4-31b.sh -port 8000 -host 192.168.1.200"),
-    ("gemma-q4", "./run-Gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit"),
+    ("gemma-q8", "./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200"),
+    ("gemma-q4", "./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit"),
 ])
 async def test_llama_run_checks_port_runs_then_waits_ready(client, fake_runner, variant, script):
     r = await client.post(f"{LLAMA}/run", json={"variant": variant})

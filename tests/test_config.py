@@ -31,7 +31,7 @@ def test_repo_config_loads():
     assert llama.default_variant == "qwen-q8"
     assert llama.variants["qwen-q8"].command.endswith("./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200")
     assert llama.variants["qwen-q4"].command.endswith(" -4bit")
-    assert llama.variants["gemma-q8"].command.endswith("./run-Gemma-4-31b.sh -port 8000 -host 192.168.1.200")
+    assert llama.variants["gemma-q8"].command.endswith("./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200")
     assert llama.variants["gemma-q4"].command.endswith(" -qat4bit")
     assert llama.variants["gemma-q4"].model == "Gemma-4-31B-it QAT UD-Q4_K_XL"
     assert llama.stop.startswith("killall ") and llama.stop_before_run

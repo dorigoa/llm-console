@@ -512,14 +512,17 @@ Anche i commenti nel codice sono in inglese. README e PLAN restano in italiano.
 | Strata | "Model: Qwen3.8-Flash-Next" | `iq4 · UD-IQ4_XS`, `q4 · UD-Q4_K_XL`, `q5 · UD-Q5_K_XL`, `q6 · UD-Q6_K_XL`, `q8 · Q8_0` |
 | llama-server | "Models: Qwen3.8-27B, Gemma-4-31B-it" (legenda "Model") | Qwen3.8-27B 8 bit (default) / 4 bit; Gemma-4-31B-it 8 bit (UD-Q8_K_XL) / 4 bit (QAT UD-Q4_K_XL) |
 
-Gemma usa `~/Llama/run-Gemma-4-31b.sh -port 8000 -host 192.168.1.200 [-qat4bit]`. Gli id delle
+Gemma usa `~/Llama/run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 [-qat4bit]`. Lo script è stato
+rinominato da `run-Gemma-4-31b.sh` nel tuo commit `65a6c3e`; la config è allineata. Gli id delle
 varianti di llama-server sono ora `qwen-q8`, `qwen-q4`, `gemma-q8` e `gemma-q4`.
 
 **Script sul PC: problemi trovati (20/11, sola lettura, non modificati)**
 - `~/Llama/run-Gemma-4-31b.sh` (`239186b`):
-  - **percorsi sbagliati**: le righe 62, 80, 132 e 196 usano `/nvme/gguf/gemma-4-31b/…`, ma la
-    cartella è `/nvme/gguf/gemma-4-31B` (ext4 distingue maiuscole e minuscole), quindi llama-server
-    non trova il modello e il Run fallisce;
+  - **percorsi sbagliati**: le righe 62, 80, 132 e 196 usavano `/nvme/gguf/gemma-4-31b/…`, ma la
+    cartella era `/nvme/gguf/gemma-4-31B` (ext4 distingue maiuscole e minuscole), quindi llama-server
+    non trovava il modello e il Run falliva;
+  - **corretto da te** (`7215861`): lo script è ora `run-gemma-4-31b.sh` e usa `/nvme/gguf/gemma-4/`,
+    dove ci sono tutti i file che referenzia (verificato il 20/11);
   - `#!/bin/bash` è alla riga 18 invece che alla 1. Funziona lo stesso perché viene lanciato da bash,
     ma è fragile.
 - `~/Strata/run-unsloth-ud-q6_k_xl.sh` punta a `models/unsloth-UD-Q6_K_XL`, che non esiste (c'è

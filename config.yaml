@@ -48,11 +48,11 @@ tabs:
           gemma-q8:         # + MTP drafter mtp-gemma-4-31B-it-Q8_0
             label: "Gemma-4-31B-it · 8 bit (UD-Q8_K_XL)"
             model: Gemma-4-31B-it UD-Q8_K_XL
-            command: cd ~/Llama && ./run-Gemma-4-31b.sh -port 8000 -host 192.168.1.200
+            command: cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200
           gemma-q4:         # + MTP drafter mtp-gemma-4-31B-it-Q4_0
             label: "Gemma-4-31B-it · 4 bit (QAT UD-Q4_K_XL)"
             model: Gemma-4-31B-it QAT UD-Q4_K_XL
-            command: cd ~/Llama && ./run-Gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit
+            command: cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit
         # -w: wait until it has exited (GPUs free); nothing running is not an error.
         stop: killall -q -w llama-server || true
         # Strata and llama-server use the same GPUs and port 8000: Run is refused
