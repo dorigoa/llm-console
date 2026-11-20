@@ -8,7 +8,10 @@ The page has one tab per host and one card per engine. Each card has a green **R
   reports when the model's API answers.
 - **Stop** runs the engine's stop command.
 - A **live line** says what the engine is doing now, updated every 3 seconds: off, idle, prefill or
-  generating, with the tokens per second and, with MTP, the share of drafted tokens accepted.
+  generating, with the tokens per second and, with MTP, the share of drafted tokens accepted. While
+  the engine is idle, a second line sums up the last request: its average prefill and generation
+  speeds, the context it filled and its MTP acceptance.
+- The card's header shows the address and port the engine serves on.
 
 The Linux tab drives llama-server and Strata on a PC; the Mac tab drives TurboFieldfareServer and
 mlx_lm.server on a Mac Studio.
@@ -245,7 +248,7 @@ fields:
 | `ready: {url, process, timeout}` | A Run succeeds only once `url` answers 2xx (e.g. `/v1/models`). See below for `process`. |
 | `running` | Remote command telling whether the engine is on: exit 0 = on, 1 = off, anything else = cannot tell. |
 | `exclusive_with: [id, …]` | Sections of the same tab that cannot be on together with this one; each needs `running`. While one of them is on, or has a job running, Run is refused and the page says to stop it first. |
-| `metrics: {kind, url}` | The card's live line. `kind` is `llama-server`, `strata`, `turbofieldfare` or `mlx-lm`; `url` is the engine's root, e.g. `http://192.168.1.200:8000`. See [Live metrics](#live-metrics). |
+| `metrics: {kind, url}` | The card's live line. `kind` is `llama-server`, `strata`, `turbofieldfare` or `mlx-lm`; `url` is the engine's root, e.g. `http://192.168.1.200:8000`. See [Live metrics](#live-metrics). The card's header shows its host and port (or those of `ready`'s `url`, without `metrics`). |
 
 `process` in `ready` is optional. It is for a script that starts the server in the background and returns
 at once, such as `run-qwen3.8-27b.sh`. With `process`:
@@ -263,12 +266,15 @@ Hosts, tabs and the ssh settings are at the top of the file; the comments there 
 Every 3 seconds the app asks every engine with `metrics`, all at once, with a 2.5-second timeout. The
 page reads the latest answers from `/api/metrics`. What each kind of engine gives:
 
-| `kind` | Reads | Phase and speed while it runs | MTP acceptance |
+| `kind` | Reads | Phase and speed while it runs | Last request (shown while idle) |
 |---|---|---|---|
-| `llama-server` | `/slots` and `/metrics` (`--metrics`) | From `/slots`: prefill (prompt tokens read so far, no total) or generating (tokens so far). Prefill speed is the average since the phase began; generation speed is over the last 3 s. The `/metrics` counters move only when a prefill or a request ends, so they cannot give these. | `spec_decode_num_accepted_tokens_total` / `…_draft_tokens_total`, which move when a request ends: the line shows the last finished request. |
-| `strata` | `/metrics` in JSON (what Strata's Monitor shows) | Reading (prompt read of total, average speed) or generating (speed, tokens so far) | Drafts offered and accepted, from the finished requests |
-| `turbofieldfare` | `/metrics` | The `turbofieldfare_running_*` gauges of [dorigoa/turbo-fieldfare-fork](https://github.com/dorigoa/turbo-fieldfare-fork): phase, prompt progress, tokens so far, speeds. An older build says only busy or idle. | — (no MTP) |
+| `llama-server` | `/slots` and `/metrics` (`--metrics`) | From `/slots`: prefill (prompt tokens read so far, no total) or generating (tokens so far). Prefill speed is the average since the phase began; generation speed is over the last 3 s. The `/metrics` counters move only when a prefill or a request ends, so they cannot give these. | The `/metrics` counters move when a request ends: what they moved by is that request's prefill and generation tokens and seconds (the engine's own timings) and its MTP drafts (`spec_decode_num_accepted_tokens_total` / `…_draft_tokens_total`). The context is `n_prompt_tokens` of the idle slot that ran it, of the slot's `n_ctx`. After the console restarts, the counters hold only the sum of the requests so far: speeds and acceptance come back with the next request. |
+| `strata` | `/metrics` in JSON (what Strata's Monitor shows) | Reading (prompt read of total, average speed) or generating (speed, tokens so far) | The newest of its `requests`, read as Strata's own `timings` are: prompt tokens read over `prompt_ms`, `decode_tok_s`, prompt + output tokens of `max_context`, drafts accepted / offered |
+| `turbofieldfare` | `/metrics` | The `turbofieldfare_running_*` gauges of [dorigoa/turbo-fieldfare-fork](https://github.com/dorigoa/turbo-fieldfare-fork): phase, prompt progress, tokens so far, speeds. An older build says only busy or idle. | The `turbofieldfare_last_*` gauges (a speed stays from an earlier request when the last did no work in that phase) and `context_max_tokens`; no MTP |
 | `mlx-lm` | `/health` (and `/metrics` answering 404) | None: mlx_lm.server has no metrics, so the line only says it serves | — |
+
+The prefill speed counts only the prompt tokens the engine computed, not those it took from a cache.
+While the engine runs the next request, the line keeps the last one's MTP acceptance.
 
 An engine that does not answer, or answers like another kind, is shown as off; the reason is in the
 tooltip. In dry-run the live lines still read the real engines; `LLM_CONSOLE_METRICS=0` turns them off.
@@ -305,13 +311,13 @@ ends in `-dirty` when there are uncommitted changes. `container/build.sh` alone 
 
 | Method | Path | |
 |---|---|---|
-| GET | `/api/config` | Tabs and sections, without commands. |
+| GET | `/api/config` | Tabs and sections, without commands; `endpoint` is the `host:port` an engine serves on. |
 | POST | `/api/sections/{tab}/{section}/run` | Body `{"variant": "q4"}`, or with options `{"variant": "gemma-q8", "options": {"context": "128k"}}` (an option left out takes its default) → 202 `{job_id}`. 400 for an unknown variant, option or choice. 409 if a job is running, or if a section in `exclusive_with` is on (`conflicts`); 502 if that cannot be checked. |
 | GET | `/api/sections/{tab}/{section}/conflicts` | `{conflicts: [{id, label, reason: on/busy}]}`: what would refuse a Run now. |
 | POST | `/api/sections/{tab}/{section}/stop` | → 202 `{job_id}`; 409 if a job is running. |
 | GET | `/api/jobs/{id}` | State, exit code, last 200 lines of output. |
 | GET | `/api/sections/{tab}/{section}/job` | The section's last job. |
-| GET | `/api/metrics` | `{interval, sections: {"tab/section": {state, prefill_tok_s, gen_tok_s, prompt_done, prompt_total, generated, acceptance, note, age_s}}}`: the last reading of each engine. `state` is `off`, `loading`, `unloaded`, `idle`, `busy`, `prefill`, `generating`, `serving` or `unknown`. |
+| GET | `/api/metrics` | `{interval, sections: {"tab/section": {state, prefill_tok_s, gen_tok_s, prompt_done, prompt_total, generated, last, note, age_s}}}`: the last reading of each engine. `last` is `null` or `{prefill_tok_s, gen_tok_s, context, max_context, acceptance}`: the last finished request. `state` is `off`, `loading`, `unloaded`, `idle`, `busy`, `prefill`, `generating`, `serving` or `unknown`. |
 | GET | `/healthz` | `ok` |
 
 POSTs need the header `X-LLM-Console: 1` (CSRF protection), for example:

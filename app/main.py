@@ -97,6 +97,7 @@ def _config_view(config: Config, dry_run: bool) -> dict:
                     ],
                     "exclusive_with": s.exclusive_with,
                     "has_metrics": s.metrics is not None,
+                    "endpoint": s.endpoint,
                     "can_run": s.can_run,
                     "can_stop": s.can_stop,
                 }

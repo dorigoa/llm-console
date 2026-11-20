@@ -111,6 +111,11 @@ def _http_url(value: str) -> str:
     return value
 
 
+def _host_port(url: str) -> tuple[str, int]:
+    parts = urlsplit(url)
+    return parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)
+
+
 class Metrics(_Model):
     """The live line of the card: the app polls the engine every few seconds.
 
@@ -151,8 +156,7 @@ class Ready(_Model):
 
     @property
     def port(self) -> int:
-        parts = urlsplit(self.url)
-        return parts.port or (443 if parts.scheme == "https" else 80)
+        return _host_port(self.url)[1]
 
 
 class Section(_Model):
@@ -253,6 +257,15 @@ class Section(_Model):
     @property
     def can_stop(self) -> bool:
         return bool(self.stop)
+
+    @property
+    def endpoint(self) -> str | None:
+        """host:port the engine serves on: the metrics URL's, else the ready URL's."""
+        url = self.metrics.url if self.metrics else self.ready.url if self.ready else None
+        if url is None:
+            return None
+        host, port = _host_port(url)
+        return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
 
 
 class Tab(_Model):

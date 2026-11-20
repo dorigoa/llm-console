@@ -51,6 +51,34 @@ function rateText(x) {
   return `${x >= 100 ? Math.round(x).toLocaleString("en-GB") : x.toFixed(1)} tok/s`;
 }
 
+function tokens(n) {
+  return n.toLocaleString("en-GB");
+}
+
+function acceptanceText(x) {
+  return `MTP acceptance ${Math.round(x * 100)}%`;
+}
+
+// The last finished request, shown under the live line while the engine is idle.
+function lastText(last) {
+  if (!last) return "";
+  const parts = [];
+  if (last.prefill_tok_s != null) parts.push(`prefill ${rateText(last.prefill_tok_s)}`);
+  if (last.gen_tok_s != null) parts.push(`generation ${rateText(last.gen_tok_s)}`);
+  if (last.context != null) {
+    let text = `context ${tokens(last.context)}`;
+    if (last.max_context) {
+      const pct = (100 * last.context) / last.max_context;
+      text += ` / ${tokens(last.max_context)} tokens (${pct < 10 ? pct.toFixed(1) : Math.round(pct)}%)`;
+    } else {
+      text += " tokens";
+    }
+    parts.push(text);
+  }
+  if (last.acceptance != null) parts.push(acceptanceText(last.acceptance));
+  return parts.length ? `Last request: ${parts.join(" · ")}` : "";
+}
+
 // What an engine is doing now, from /api/metrics: {state, text, title}.
 function liveText(live) {
   if (live.age_s > LIVE_STALE_S) return { state: "stale", text: "No recent metrics", title: "" };
@@ -65,22 +93,25 @@ function liveText(live) {
     case "prefill":
       parts.push(`Prefill · ${rateText(live.prefill_tok_s)}`);
       if (live.prompt_total) {
-        parts.push(`${(live.prompt_done ?? 0).toLocaleString("en-GB")} / ` +
-                   `${live.prompt_total.toLocaleString("en-GB")} prompt tokens`);
+        parts.push(`${tokens(live.prompt_done ?? 0)} / ${tokens(live.prompt_total)} prompt tokens`);
       } else if (live.prompt_done != null) {   // llama-server: no prompt length while it reads
-        parts.push(`${live.prompt_done.toLocaleString("en-GB")} prompt tokens so far`);
+        parts.push(`${tokens(live.prompt_done)} prompt tokens so far`);
       }
       break;
     case "generating":
       parts.push(`Generating · ${rateText(live.gen_tok_s)}`);
-      if (live.generated != null) parts.push(`${live.generated.toLocaleString("en-GB")} tokens`);
+      if (live.generated != null) parts.push(`${tokens(live.generated)} tokens`);
       break;
     default: parts.push(`Metrics: ${live.note || live.state}`);
   }
-  if (live.acceptance != null && live.state !== "off" && live.state !== "loading") {
-    parts.push(`MTP acceptance ${Math.round(live.acceptance * 100)}% (last request)`);
+  // Idle: the last request on its own line; running the next one: its acceptance only.
+  const resting = live.state === "idle" || live.state === "unloaded";
+  const acceptance = live.last && live.last.acceptance;
+  if (!resting && acceptance != null && live.state !== "off" && live.state !== "loading") {
+    parts.push(`${acceptanceText(acceptance)} (last request)`);
   }
-  return { state: live.state, text: parts.join(" · "), title: live.note || "" };
+  return { state: live.state, text: parts.join(" · "), title: live.note || "",
+           last: resting ? lastText(live.last) : "" };
 }
 
 function storageGet(key) {
@@ -124,7 +155,11 @@ class SectionCard {
     const node = document.getElementById("section-template").content.firstElementChild.cloneNode(true);
     this.el = node;
     node.querySelector(".card-title").textContent = section.label;
-    node.querySelector(".card-host").textContent = `${tab.label} · ${tab.host.address}`;
+    // The engine's address with its port; the host's too when the engine is elsewhere.
+    const endpoint = section.endpoint;
+    node.querySelector(".card-host").textContent = !endpoint ? `${tab.label} · ${tab.host.address}`
+      : endpoint.startsWith(`${tab.host.address}:`) ? `${tab.label} · ${endpoint}`
+      : `${tab.label} · ${tab.host.address} · engine at ${endpoint}`;
     const desc = node.querySelector(".card-desc");
     desc.textContent = section.description || "";
     desc.hidden = !section.description;
@@ -132,6 +167,7 @@ class SectionCard {
     this.stopBtn = node.querySelector('[data-action="stop"]');
     this.statusEl = node.querySelector(".card-status");
     this.liveEl = node.querySelector(".card-live");
+    this.lastEl = node.querySelector(".card-last");
     this.outputEl = node.querySelector(".card-output");
     this.preEl = node.querySelector(".card-output pre");
     const configured = section.can_run || section.can_stop;
@@ -159,6 +195,8 @@ class SectionCard {
     this.liveEl.dataset.state = shown.state;
     this.liveEl.textContent = shown.text;
     this.liveEl.title = shown.title;
+    this.lastEl.textContent = shown.last || "";
+    this.lastEl.hidden = !shown.last;
   }
 
   refreshButtons() {

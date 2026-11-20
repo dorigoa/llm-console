@@ -212,6 +212,18 @@ def test_ready_port(url, port):
     assert Config.model_validate(minimal(sections=[section])).tabs[0].sections[0].ready.port == port
 
 
+@pytest.mark.parametrize(("extra", "endpoint"), [
+    ({"metrics": {"kind": "strata", "url": "http://10.0.0.1:8000"},
+      "ready": {"url": "http://10.0.0.1:9000/health"}}, "10.0.0.1:8000"),
+    ({"ready": {"url": "http://10.0.0.1/health"}}, "10.0.0.1:80"),
+    ({"metrics": {"kind": "mlx-lm", "url": "https://[fd00::1]"}}, "[fd00::1]:443"),
+    ({}, None),
+])
+def test_endpoint(extra, endpoint):
+    section = {"id": "s", "label": "S", **extra}
+    assert Config.model_validate(minimal(sections=[section])).tabs[0].sections[0].endpoint == endpoint
+
+
 @pytest.mark.parametrize("ready", [{"url": "ftp://h/x", "process": "p"},
                                    {"url": "http:///x", "process": "p"},
                                    {"url": "http://h/", "process": "a b"},

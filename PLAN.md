@@ -775,3 +775,62 @@ aveva un job in corso. Il log dice `live metrics for 4 sections`.
 - [x] Il footer dice la nuova versione (`v0.0.1-preprod-nomac-4-g21e5e01`), e il container raggiunge via
       HTTP sia il PC (8000) sia il Mac (8080).
 - Alla fine tutti gli engine sono spenti, e il preview locale è fermo.
+
+## 16. Riepilogo dell'ultima richiesta e porta sulla card (20/11/2026)
+
+**Richiesta (tua, dopo le tue prove).** A riposo la card diceva solo "Idle · MTP acceptance 58% (last
+request)". Deve dire anche, per l'ultima richiesta:
+- la media dei tok/s di prefill e di generazione, sull'intera richiesta;
+- il contesto che ha occupato.
+
+Deve mostrare anche la porta su cui l'engine è in ascolto.
+
+### 16.1 Da dove vengono i numeri (letti nel codice)
+
+| Engine | Medie di prefill e generazione | Contesto occupato | Acceptance MTP |
+|---|---|---|---|
+| llama-server | I contatori di `/metrics` si muovono a fine prefill (`prompt_tokens_total`, `prompt_seconds_total`) e a fine richiesta (`tokens_predicted_total`, `tokens_predicted_seconds_total`). Quando si muove `tokens_predicted_total`, le differenze dall'ultima volta sono i token e i secondi di quella richiesta, con i tempi dell'engine | `/slots` a riposo: lo slot conserva `task_prev`, e `n_prompt_tokens` è la KV che la richiesta ha lasciato (prompt più generati, meno 1), su `n_ctx` dello slot. Si prende lo slot con l'`id_task` più alto | Differenze di `spec_decode_num_accepted/draft_tokens_total` nello stesso momento |
+| Strata | `requests[0]` del suo `/metrics` JSON, letto come fa il suo `request_timings()`: token di prompt letti su `prompt_ms`, e `decode_tok_s` | `prompt_total + output_tokens`, su `engine.max_context` | `drafts_accepted / drafts_offered` della richiesta |
+| TurboFieldfare | I gauge `last_prefill_tokens_per_second` e `last_decode_tokens_per_second`, che esistevano già prima del fork. Il fork **non** è cambiato | `last_context_tokens`, su `context_max_tokens` | Non c'è MTP |
+| mlx_lm.server | Nessun dato | — | — |
+
+Il prefill conta solo i token calcolati, non quelli presi da una cache: è la stessa regola dei
+`timings` di llama.cpp e di Strata.
+
+### 16.2 Come funziona nell'app
+
+- `Live.last` (`LastRequest`): `prefill_tok_s`, `gen_tok_s`, `context`, `max_context`, `acceptance`.
+  Prende il posto di `Live.acceptance`.
+- Cambio di comportamento per llama-server: alla prima lettura (la console riparte con l'engine già
+  acceso) i contatori contengono solo la somma di tutte le richieste dall'avvio. Prima l'acceptance
+  mostrava quella media con l'etichetta "(last request)". Ora medie e acceptance tornano con la
+  richiesta successiva; il contesto c'è subito, perché viene da `/slots`.
+- La pagina, a riposo (`idle`, `unloaded`), mostra una seconda riga sotto quella live: "Last request:
+  prefill … · generation … · context N / max tokens (x%) · MTP acceptance y%". Durante la richiesta
+  successiva la riga live tiene solo l'acceptance dell'ultima, come prima.
+- **Porta:** `/api/config` dà per ogni sezione `endpoint` = `host:porta`, preso dall'URL di `metrics`
+  (o da quello di `ready`). L'intestazione della card diventa "Linux · 192.168.1.200:8000". Gli URL che
+  il poller interroga restano sul server: il test che vietava ogni indirizzo dell'engine nella config
+  ora vieta solo gli URL `http://`.
+
+### 16.3 Prove dal vivo (20/11, preview sul Mac contro gli engine veri)
+
+Ogni engine è stato avviato e fermato dalla console di raspy. Per il confronto, i valori di riferimento
+sono i `timings` della risposta stessa, oppure i contatori dell'engine.
+
+| Engine | Richiesta | Console | Engine |
+|---|---|---|---|
+| llama-server (Qwen 8 bit, MTP) | 23.344 token di prompt, 400 generati | prefill 966,1 tok/s, generazione 20,80 tok/s, contesto 23.743 / 262.144, acceptance 25,9% | `timings`: 966,0 e 20,75 tok/s, 224 di 864 draft accettati |
+| Strata q4 | 23.344 + 400 | 1070,0 e 36,3 tok/s, contesto 23.744 / 262.144, acceptance 68,4% | `timings`: 1070,0 e 36,3 tok/s, 145 di 212 |
+| TurboFieldfare (Gemma 4 bit, 64k) | 11.684 + 300 | 165,8 e 38,0 tok/s, contesto 11.984 / 65.536 | contatori: 11.684 token in 70,4 s, 300 in 7,9 s |
+
+- La card mostra le due righe, anche a larghezza di telefono.
+- Le intestazioni dicono `192.168.1.200:8000` e `192.168.1.101:8080`.
+- mlx_lm.server, che era acceso, si è spento da solo durante le prove: non l'ho toccato.
+- Alla fine tutto è spento.
+
+### 16.4 Criteri di accettazione (dopo il deploy)
+
+- [ ] Su raspy le intestazioni delle card mostrano host e porta.
+- [ ] Dopo una richiesta, a riposo, la seconda riga mostra prefill, generazione, contesto e (con MTP)
+      acceptance dell'ultima richiesta, uguali ai `timings` della risposta.

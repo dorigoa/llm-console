@@ -224,6 +224,13 @@ summary:focus-visible {
 .card-live[data-state="prefill"],
 .card-live[data-state="generating"],
 .card-live[data-state="busy"] { color: var(--text); }
+/* The last finished request, under the live line (aligned with its text). */
+.card-last {
+  margin: -6px 0 0 16px;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
 
 .card-output summary {
   cursor: pointer;

@@ -7,14 +7,17 @@ does: llama-server and Strata share port 8000, TurboFieldfare and mlx_lm.server
 share 8080, and each reader recognizes its own engine's answer (anything else is
 "off").
 
-What each kind gives (see PLAN.md §15):
+What each kind gives (see PLAN.md §15 and §16):
 - llama-server: /slots for the phase and the token counts so far (its /metrics
-  counters move only when a prefill or a request ends), /metrics for the MTP
-  drafts (spec_decode_*), counted when a request ends.
+  counters move only when a prefill or a request ends); /metrics' counters for
+  the last request (they move when it ends: the differences are its prefill and
+  generation time and tokens, and its MTP drafts); the idle slot that ran it for
+  the context it filled.
 - strata: /metrics in JSON (what its Monitor shows): state, prefill progress and
-  speed, generation speed, and the drafts of the finished requests.
+  speed, generation speed, and the last requests with their timings and drafts.
 - turbofieldfare: /metrics, with the running_* gauges of the fork (phase, prompt
-  progress, tokens so far, speeds); an older build gives busy/idle only.
+  progress, tokens so far, speeds) and its last_* gauges; an older build gives
+  busy/idle only.
 - mlx-lm: no metrics at all; /health answering (and /metrics not) = serving.
 
 Speeds measured by the app are differences between two polls of the same request
@@ -41,6 +44,26 @@ TIMEOUT = 2.5
 
 
 @dataclass
+class LastRequest:
+    """The last request the engine finished, over its whole run."""
+
+    # Prompt tokens computed (not taken from a cache) per second of prefill.
+    prefill_tok_s: float | None = None
+    # Tokens generated per second of generation.
+    gen_tok_s: float | None = None
+    # Tokens the request filled in the context (prompt + generated), of the
+    # engine's context length.
+    context: int | None = None
+    max_context: int | None = None
+    # MTP: drafted tokens accepted / drafted.
+    acceptance: float | None = None
+
+    def known(self) -> LastRequest | None:
+        """None when the engine said nothing about it (e.g. no request yet)."""
+        return self if any(v is not None for k, v in asdict(self).items() if k != "max_context") else None
+
+
+@dataclass
 class Live:
     """One engine at one poll."""
 
@@ -53,9 +76,8 @@ class Live:
     prompt_total: int | None = None
     # Tokens the running request has generated so far.
     generated: int | None = None
-    # MTP: drafted tokens accepted / drafted, in the requests that finished
-    # between the last two changes of the counters (on first sight: since start).
-    acceptance: float | None = None
+    # The last finished request (while the engine runs the next one too).
+    last: LastRequest | None = None
     # Why off or unknown (e.g. "connection refused").
     note: str | None = None
     # time.time() of the poll.
@@ -85,6 +107,10 @@ def _rate(count: float, prev_count: float, dt: float) -> float | None:
     return (count - prev_count) / dt if dt > 0 and count >= prev_count else None
 
 
+def _ratio(part: float | None, whole: float | None) -> float | None:
+    return part / whole if part is not None and whole else None
+
+
 class Reader:
     """Reads one engine; keeps what the next poll needs to compute speeds."""
 
@@ -94,9 +120,6 @@ class Reader:
 
     def reset(self) -> None:
         """Forget the previous poll: the engine is off, or another one answers."""
-        self.drafted: float | None = None
-        self.accepted: float | None = None
-        self.acceptance: float | None = None
 
     async def read(self, client: httpx.AsyncClient, now: float) -> Live:
         raise NotImplementedError
@@ -105,17 +128,6 @@ class Reader:
         self.reset()
         return Live("off", note=note)
 
-    def track_acceptance(self, drafted: float | None, accepted: float | None) -> float | None:
-        """MTP acceptance of the requests that finished since the counters last moved."""
-        if drafted is None or accepted is None:
-            return self.acceptance
-        if self.drafted is None or drafted < self.drafted:     # first sight, or the engine restarted
-            self.acceptance = accepted / drafted if drafted > 0 else None
-        elif drafted > self.drafted:
-            self.acceptance = (accepted - self.accepted) / (drafted - self.drafted)
-        self.drafted, self.accepted = drafted, accepted
-        return self.acceptance
-
 
 class LlamaServerReader(Reader):
     """/slots, per processing slot: n_prompt_tokens_processed grows per batch during
@@ -123,7 +135,19 @@ class LlamaServerReader(Reader):
     n_prompt_tokens is the part of the prompt already in the KV, not the prompt's
     length, so there is no total to show. A batch (e.g. 2048 tokens) can take
     about as long as a poll, so the prefill speed is the average since the poll
-    that first saw the phase, not the last interval (which would read 0, 1x or 2x)."""
+    that first saw the phase, not the last interval (which would read 0, 1x or 2x).
+
+    The last request: /metrics' prompt counters move when its prefill ends, the
+    generation and MTP ones when it ends; so when tokens_predicted_total moves,
+    the differences since it last moved are that request's (the engine's own
+    timings). The console first seeing an engine that already served requests
+    knows only their sum, so it waits for the next one. The context it filled is
+    n_prompt_tokens of the idle slot that ran it (the KV it left: prompt and
+    generated tokens), of that slot's n_ctx."""
+
+    COUNTERS = ("prompt_tokens_total", "prompt_seconds_total", "tokens_predicted_total",
+                "tokens_predicted_seconds_total", "spec_decode_num_draft_tokens_total",
+                "spec_decode_num_accepted_tokens_total")
 
     def reset(self) -> None:
         super().reset()
@@ -131,6 +155,9 @@ class LlamaServerReader(Reader):
         #             processed then)
         self.slots: dict[Any, tuple] = {}
         self.slots_at = 0.0
+        # The counters when tokens_predicted_total last moved, and what that move said.
+        self.counters: dict[str, float] | None = None
+        self.finished = LastRequest()
 
     async def read(self, client: httpx.AsyncClient, now: float) -> Live:
         r = await client.get(f"{self.url}/metrics")
@@ -139,15 +166,38 @@ class LlamaServerReader(Reader):
         if r.status_code != 200 or not _has_line(r.text, "llamacpp:"):
             return self.off(f"no llama-server metrics (HTTP {r.status_code})")
         m = parse_prometheus(r.text)
-        acceptance = self.track_acceptance(m.get("llamacpp:spec_decode_num_draft_tokens_total"),
-                                           m.get("llamacpp:spec_decode_num_accepted_tokens_total"))
+        self._track_requests(m)
         slots = await client.get(f"{self.url}/slots")
         if slots.status_code != 200 or not isinstance(slots.json(), list):
             busy = m.get("llamacpp:requests_processing", 0) > 0     # started with --no-slots
-            return Live("busy" if busy else "idle", acceptance=acceptance)
+            return Live("busy" if busy else "idle", last=self.finished.known())
         live = self._from_slots(slots.json(), now)
-        live.acceptance = acceptance
+        live.last = self._last(slots.json())
         return live
+
+    def _track_requests(self, m: dict[str, float]) -> None:
+        counters = {k: m.get(f"llamacpp:{k}", 0.0) for k in self.COUNTERS}
+        prev = self.counters
+        if prev is None or counters["tokens_predicted_total"] < prev["tokens_predicted_total"]:
+            self.counters, self.finished = counters, LastRequest()    # first sight, or a restart
+        elif counters["tokens_predicted_total"] > prev["tokens_predicted_total"]:
+            d = {k: counters[k] - prev[k] for k in self.COUNTERS}
+            self.finished = LastRequest(
+                prefill_tok_s=_ratio(d["prompt_tokens_total"], d["prompt_seconds_total"]),
+                gen_tok_s=_ratio(d["tokens_predicted_total"], d["tokens_predicted_seconds_total"]),
+                acceptance=_ratio(d["spec_decode_num_accepted_tokens_total"],
+                                  d["spec_decode_num_draft_tokens_total"]))
+            self.counters = counters
+
+    def _last(self, slots: list) -> LastRequest | None:
+        """What the counters said, with the context from the idle slot of the newest task."""
+        idle = [s for s in slots if isinstance(s, dict) and not s.get("is_processing")
+                and isinstance(s.get("id_task"), int) and s.get("n_prompt_tokens")]
+        newest = max(idle, key=lambda s: s["id_task"], default=None)
+        last = LastRequest(**asdict(self.finished))
+        if newest is not None:
+            last.context, last.max_context = int(newest["n_prompt_tokens"]), _int(newest.get("n_ctx"))
+        return last.known()
 
     def _from_slots(self, slots: list, now: float) -> Live:
         dt = now - self.slots_at
@@ -193,8 +243,7 @@ class StrataReader(Reader):
         data = _json(r) if r.status_code == 200 else None
         if not isinstance(data, dict) or not isinstance(data.get("live"), dict) or "engine" not in data:
             return self.off(f"no Strata metrics (HTTP {r.status_code})")
-        totals = data.get("totals") or {}
-        acceptance = self.track_acceptance(totals.get("drafts_offered"), totals.get("drafts_accepted"))
+        last = _strata_last(data)
         live = data["live"]
         state = live.get("state")
         if state == "reading":
@@ -203,15 +252,35 @@ class StrataReader(Reader):
             if rate is None and read is not None and self.prompt_read is not None:
                 rate = _rate(read, self.prompt_read[1], now - self.prompt_read[0])
             self.prompt_read = (now, read) if read is not None else None
-            return Live("prefill", prefill_tok_s=rate, prompt_done=read, prompt_total=total,
-                        acceptance=acceptance)
+            return Live("prefill", prefill_tok_s=rate, prompt_done=read, prompt_total=total, last=last)
         self.prompt_read = None
         if state == "generating":
-            return Live("generating", gen_tok_s=live.get("tok_s"), generated=live.get("generated"),
-                        acceptance=acceptance)
+            return Live("generating", gen_tok_s=live.get("tok_s"), generated=live.get("generated"), last=last)
         if state in ("idle", "unloaded"):
-            return Live(state, acceptance=acceptance)
-        return Live("unknown", note=f"Strata state {state!r}", acceptance=acceptance)
+            return Live(state, last=last)
+        return Live("unknown", note=f"Strata state {state!r}", last=last)
+
+
+def _strata_last(data: dict) -> LastRequest | None:
+    """The newest of /metrics' requests, read as Strata's own request_timings() does
+    (serve/server_parts/core.py): the prompt tokens it computed are the prompt less
+    what the conversation cache, or the slot's own session, already held."""
+    requests = data.get("requests")
+    r = requests[0] if isinstance(requests, list) and requests and isinstance(requests[0], dict) else None
+    if r is None:
+        return None
+    seen = r.get("prompt_tokens") or 0
+    cached = int(r.get("reused") or 0)
+    if r.get("prompt_read") is not None and r.get("finish") != "cancel":
+        cached = max(cached, seen - int(r["prompt_read"]))
+    computed, prompt_ms = max(0, seen - cached), r.get("prompt_ms")
+    whole = r.get("prompt_total") if r.get("prompt_total") is not None else seen
+    return LastRequest(
+        prefill_tok_s=computed / (prompt_ms / 1000) if computed and prompt_ms else None,
+        gen_tok_s=r.get("decode_tok_s"),
+        context=whole + (r.get("output_tokens") or 0) if whole else None,
+        max_context=_int((data.get("engine") or {}).get("max_context")),
+        acceptance=_ratio(r.get("drafts_accepted"), r.get("drafts_offered"))).known()
 
 
 class TurboFieldfareReader(Reader):
@@ -224,17 +293,23 @@ class TurboFieldfareReader(Reader):
         if r.status_code != 200 or not _has_line(r.text, "turbofieldfare_"):
             return self.off(f"no TurboFieldfare metrics (HTTP {r.status_code})")
         m = parse_prometheus(r.text)
+        # The last_* gauges: the context and speeds of the last completed request
+        # (a speed stays from an earlier one when the last did no work in that phase).
+        last = LastRequest(prefill_tok_s=m.get("turbofieldfare_last_prefill_tokens_per_second"),
+                           gen_tok_s=m.get("turbofieldfare_last_decode_tokens_per_second"),
+                           context=_int(m.get("turbofieldfare_last_context_tokens")),
+                           max_context=_int(m.get("turbofieldfare_context_max_tokens"))).known()
         phase = next((p for p in ("prefill", "decode", "idle")
                       if m.get(f'turbofieldfare_running_phase{{phase="{p}"}}') == 1), None)
         if phase is None:        # a build without the running_* gauges: busy or idle only
             self.decode = None
-            return Live("busy" if m.get("turbofieldfare_requests_running", 0) > 0 else "idle")
+            return Live("busy" if m.get("turbofieldfare_requests_running", 0) > 0 else "idle", last=last)
         started = m.get("turbofieldfare_generations_started_total")
         if phase == "prefill":
             self.decode = None
             return Live("prefill", prefill_tok_s=m.get("turbofieldfare_running_prefill_tokens_per_second"),
                         prompt_done=_int(m.get("turbofieldfare_running_prompt_done_tokens")),
-                        prompt_total=_int(m.get("turbofieldfare_running_prompt_tokens")))
+                        prompt_total=_int(m.get("turbofieldfare_running_prompt_tokens")), last=last)
         if phase == "decode":
             generated = m.get("turbofieldfare_running_generated_tokens", 0)
             rate = None
@@ -243,9 +318,9 @@ class TurboFieldfareReader(Reader):
             if rate is None:     # first sight of this request's decode: its average so far
                 rate = m.get("turbofieldfare_running_decode_tokens_per_second")
             self.decode = (started, now, generated)
-            return Live("generating", gen_tok_s=rate, generated=_int(generated))
+            return Live("generating", gen_tok_s=rate, generated=_int(generated), last=last)
         self.decode = None
-        return Live("idle")
+        return Live("idle", last=last)
 
 
 class MlxLmReader(Reader):
