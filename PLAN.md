@@ -35,7 +35,8 @@ sicurezza è la tailnet.
   2. llm-console va su un'altra porta HTTPS (es. `--https=10443`), ai-console resta dov'è;
   3. llm-console sostituisce ai-console (che viene dismessa).
 - **D2 — llama-server (Tab Linux).** Implementata (§11): Qwen3.8-27B 8 bit (default) / 4 bit con lo
-  script `~/Llama/run-qwen3.8-27b.sh`, Stop con `killall`. Gemma più avanti. Aperta **L2** (§11.3).
+  script `~/Llama/run-qwen3.8-27b.sh`, Stop con `killall`. Mai acceso insieme a Strata: il Run
+  dell'uno con l'altro acceso mostra un dialog "spegni prima …" (§11.3). Gemma più avanti.
 - **D3 — Tab Mac.** Contenuto non ancora definito → tab presente, vuota ("da configurare").
 - ~~**D4 — Script Strata.**~~ Chiusa: gli script sul PC hanno shebang e path assoluto. L'app prefissa comunque `PATH="$HOME/.local/bin:$PATH"` (innocuo, utile per i comandi futuri di llama-server/Mac).
 
@@ -154,6 +155,7 @@ Una sezione senza `variants`/`stop` viene mostrata con i pulsanti disabilitati.
 | POST | `/api/sections/{tab}/{section}/stop` | — | `202 {"job_id": …}`; `409` se in corso |
 | GET | `/api/jobs/{job_id}` | — | `{state: running/succeeded/failed/timeout, exit_code, started_at, ended_at, output_tail}` |
 | GET | `/api/sections/{tab}/{section}/job` | — | ultimo job della sezione (per ripristinare la UI dopo un reload) |
+| GET | `/api/sections/{tab}/{section}/conflicts` | — | sezioni di `exclusive_with` accese o con un job in corso (§11.3) |
 | GET | `/healthz` | — | `ok` |
 
 Il client manda **solo identificatori** (`tab`, `section`, `variant`): il comando remoto
@@ -375,14 +377,33 @@ Codice (generico, riusabile per Gemma e per il Mac):
   - "non è più in esecuzione" quando il processo manca;
   - un processo lanciato con `&` (come fa lo script) sopravvive alla chiusura della sessione ssh dell'app.
 
-### 11.3 Decisione aperta
+### 11.3 Strata e llama-server: mai accesi insieme (L2, decisa 20/11)
 
-- **L2: Strata acceso quando si lancia llama-server (e viceversa).**
-  - *Oggi*: il Run di llama-server fallisce subito con "La porta 8000 è già in uso" e Strata resta acceso.
-    Il Run di Strata con llama-server acceso non fa controlli: lo script di Strata dovrebbe fallire da
-    solo (da verificare).
-  - *Alternativa*: un gruppo esclusivo `pc-gpu`. Il Run di una sezione ferma prima l'altra nello stesso
-    job, il dialog lo dice ("Fermerà Strata"), e un job in corso su una delle due blocca anche l'altra (409).
+Se uno dei due è acceso, il Run dell'altro **non parte**. Al suo posto un dialog dice di spegnerlo
+prima, ad esempio "**Strata è acceso** · llama-server e Strata non possono essere accesi insieme. Spegni
+prima Strata con il pulsante Stop della sua card, poi riprova Run". Con OK il dialog si chiude, la card
+da spegnere si evidenzia e il focus va sul suo Stop. Nessuno stop automatico.
+
+- **Config**: ogni sezione ha `running` (comando remoto: exit 0 = acceso, 1 = spento, altro = non
+  verificabile) e `exclusive_with` (le sezioni incompatibili).
+  - llama-server: `pgrep -x llama-server`.
+  - Strata: `strata launch --status --output json | jq -e '(.ok or error(…)) and (.running | length > 0)'`.
+    `running` elenca i lanci in stato `starting` o `ready`, quindi copre anche il caricamento.
+    Se Strata segnala un errore, jq esce con 4 o 5.
+  - Tempi via ssh: circa 0,4 s per Strata e 0,3 s per llama-server.
+- **Quando si controlla**:
+  - **al clic su Run**, con `GET /api/sections/{tab}/{section}/conflicts`, prima di aprire il dialog
+    delle varianti;
+  - **di nuovo nel `POST …/run`**, sotto un lock: due Run incrociati non passano entrambi.
+- **Esiti**:
+  - acceso, oppure un job in corso sull'altra sezione ("Operazione in corso su …") → `409` con
+    `conflicts`, e la pagina mostra il dialog;
+  - controllo non riuscito (exit diverso da 0 e 1, o timeout di 20 s) → `502` "Non riesco a verificare
+    se … è acceso" e il Run non parte.
+- **Stop** non è mai bloccato.
+- **Dry-run**: tutti gli engine risultano spenti.
+- **Cache**: tutte le risposte hanno `Cache-Control: no-cache`. Senza, dopo un deploy il browser poteva
+  riusare un `style.css` o un `app.js` vecchio (osservato nella preview).
 
 ### 11.4 Fasi
 
@@ -390,6 +411,7 @@ Codice (generico, riusabile per Gemma e per il Mac):
 - [x] **L-B — App**: §11.2, test, dry-run (dialog e sequenza dei passi verificati nel browser).
 - [x] **L-C — Deploy** di `f447c00` con `./deploy.sh` (20/11 09:56). Run 8 bit provato dalla console
       (sotto); gli altri criteri restano da provare.
+- [x] **L-D — Strata e llama-server esclusivi** (§11.3): app, test, dialog verificato nella preview.
 
 ### 11.5 Criteri di accettazione
 
@@ -401,7 +423,7 @@ Codice (generico, riusabile per Gemma e per il Mac):
       - llama-server ancora attivo dopo il job e in ascolto sulla 8000;
       - dalla tailnet `/v1/models` risponde e `/v1/chat/completions` genera a ~50 tok/s.
 - [ ] Run → 4 bit mentre gira 8 bit: killall e avvio nello stesso job, poi Q4_K_XL in servizio.
-- [ ] Run di llama-server con Strata acceso: `failed` subito ("porta 8000 già in uso"), Strata intatto
-      (con L2: Strata fermato, poi llama-server avviato).
+- [ ] Run di llama-server con Strata acceso: dialog "Strata è acceso", nessun job, Strata intatto.
+- [ ] Run di Strata con llama-server acceso: dialog "llama-server è acceso", nessun job.
 - [ ] Stop: nessun llama-server sul PC; un secondo Stop è comunque `succeeded`.
 - [ ] Un avvio che fallisce (es. GPU occupate) → `failed` appena il processo muore, non dopo 10 minuti.

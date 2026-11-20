@@ -43,6 +43,10 @@ tabs:
             command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -4bit
         # -w: wait until it has exited (GPUs free); nothing running is not an error.
         stop: killall -q -w llama-server || true
+        # Strata and llama-server use the same GPUs and port 8000: Run is refused
+        # (the page says to stop the other first) while the other one is on.
+        running: pgrep -x llama-server >/dev/null
+        exclusive_with: [strata]
         ready:
           url: http://192.168.1.200:8000/health
           process: llama-server
@@ -60,6 +64,12 @@ tabs:
           q6:  ~/Strata/run-unsloth-ud-q6_k_xl.sh
           q8:  ~/Strata/run-unsloth-ud-q8_k_xl.sh
         stop: ~/Strata/stop.sh
+        # .running lists the launches in state starting or ready. jq exits 0 if there
+        # is one, 1 if none; 4/5 (check failed, Run refused) if Strata reports an error.
+        running: >-
+          strata launch --status --output json
+          | jq -e '(.ok or error("strata status failed")) and (.running | length > 0)' >/dev/null
+        exclusive_with: [llama-server]
 
   - id: mac
     label: Mac

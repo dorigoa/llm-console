@@ -45,10 +45,10 @@ function timeOf(iso) {
 }
 
 class SectionCard {
-  constructor(tab, section, dialog) {
+  constructor(tab, section, dialogs) {
     this.tab = tab;
     this.section = section;
-    this.dialog = dialog;
+    this.dialogs = dialogs;
     this.base = `/api/sections/${encodeURIComponent(tab.id)}/${encodeURIComponent(section.id)}`;
     this.job = null;
     this.pollTimer = null;
@@ -67,7 +67,7 @@ class SectionCard {
     node.querySelector(".card-note").hidden = configured;
     this.statusEl.hidden = !configured;
 
-    this.runBtn.addEventListener("click", () => this.dialog.open(this));
+    this.runBtn.addEventListener("click", () => this.requestRun());
     this.stopBtn.addEventListener("click", () => this.start("stop"));
     this.refreshButtons();
   }
@@ -87,14 +87,66 @@ class SectionCard {
     if (res && res.ok && res.data.job) this.showJob(res.data.job);
   }
 
+  // Labels of the sections that cannot be on together with this one.
+  get exclusiveLabels() {
+    const ids = this.section.exclusive_with || [];
+    return this.tab.sections.filter((s) => ids.includes(s.id)).map((s) => s.label).join(" e ");
+  }
+
+  // Run: if another engine that excludes this one is on, say so instead of
+  // opening the Run dialog. The server checks again when the Run is sent.
+  async requestRun() {
+    if (this.busy) return;
+    if (!this.exclusiveLabels) {
+      this.dialogs.run.open(this);
+      return;
+    }
+    const saved = this.saveStatus();
+    this.pending = true;
+    this.refreshButtons();
+    this.setStatus("running", `Controllo che ${this.exclusiveLabels} sia spento…`);
+    let res;
+    try {
+      res = await api("GET", `${this.base}/conflicts`);
+    } catch {
+      res = { ok: false, status: 0, data: null };
+    } finally {
+      this.pending = false;
+      this.refreshButtons();
+    }
+    if (!res.ok) {
+      this.setStatus("error", res.status ? errorMessage(res) : "Server non raggiungibile");
+      return;
+    }
+    saved();
+    if (res.data.conflicts.length > 0) this.dialogs.notice.show(this, res.data.conflicts);
+    else this.dialogs.run.open(this);
+  }
+
+  // Returns a function that puts the status line back as it is now.
+  saveStatus() {
+    const state = this.statusEl.dataset.state;
+    const nodes = [...this.statusEl.childNodes];
+    return () => {
+      if (state === undefined) delete this.statusEl.dataset.state;
+      else this.statusEl.dataset.state = state;
+      this.statusEl.replaceChildren(...nodes);
+    };
+  }
+
   async start(action, variant) {
     if (this.busy) return;
+    const saved = this.saveStatus();
     this.pending = true;
     this.refreshButtons();
     this.setStatus("running", `${action === "run" ? `Run ${variant}` : "Stop"}: invio…`);
     try {
       const res = await api("POST", `${this.base}/${action}`, action === "run" ? { variant } : undefined);
-      if (res.status === 409 && res.data && res.data.detail && res.data.detail.job) {
+      if (res.status === 409 && res.data && res.data.detail && res.data.detail.conflicts) {
+        // Another engine was switched on after the dialog opened.
+        saved();
+        this.dialogs.notice.show(this, res.data.detail.conflicts);
+      } else if (res.status === 409 && res.data && res.data.detail && res.data.detail.job) {
         // Someone else (another tab, another device) started one: follow that.
         this.showJob(res.data.detail.job);
         this.setStatus("error", errorMessage(res));
@@ -213,7 +265,50 @@ class RunDialog {
   }
 }
 
-function buildTabs(config, dialog) {
+// "Strata è acceso": shown instead of the Run dialog. OK closes it and points
+// at the card to stop.
+class NoticeDialog {
+  constructor() {
+    this.el = document.getElementById("notice-dialog");
+    this.titleEl = document.getElementById("notice-title");
+    this.textEl = document.getElementById("notice-text");
+    this.cards = [];
+    this.target = null;
+    this.el.addEventListener("click", (e) => { if (e.target === this.el) this.el.close(); });
+    this.el.addEventListener("close", () => this.pointAtTarget());
+  }
+
+  show(card, conflicts) {
+    const labels = conflicts.map((c) => c.label).join(" e ");
+    const many = conflicts.length > 1;
+    if (conflicts.every((c) => c.reason === "on")) {
+      this.titleEl.textContent = `${labels} ${many ? "sono accesi" : "è acceso"}`;
+      this.textEl.textContent =
+        `${card.section.label} e ${labels} non possono essere accesi insieme. ` +
+        `Spegni prima ${labels} con il pulsante Stop ${many ? "delle loro card" : "della sua card"}, ` +
+        `poi riprova Run.`;
+    } else {
+      this.titleEl.textContent = `Operazione in corso su ${labels}`;
+      this.textEl.textContent =
+        `Attendi che finisca. Se poi ${labels} ${many ? "restano accesi" : "resta acceso"}, ` +
+        `${many ? "spegnili" : "spegnilo"} con Stop prima di avviare ${card.section.label}.`;
+    }
+    this.target = this.cards.find((c) => c.tab.id === card.tab.id && c.section.id === conflicts[0].id) || null;
+    this.el.showModal();
+  }
+
+  pointAtTarget() {
+    const card = this.target;
+    this.target = null;
+    if (!card) return;
+    card.el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    card.stopBtn.focus({ preventScroll: true });
+    card.el.classList.add("attention");
+    setTimeout(() => card.el.classList.remove("attention"), 1800);
+  }
+}
+
+function buildTabs(config, dialogs) {
   const tabsEl = document.getElementById("tabs");
   const panelsEl = document.getElementById("panels");
   panelsEl.replaceChildren();
@@ -244,7 +339,7 @@ function buildTabs(config, dialog) {
       panel.append(empty);
     }
     for (const section of tab.sections) {
-      const card = new SectionCard(tab, section, dialog);
+      const card = new SectionCard(tab, section, dialogs);
       panel.append(card.el);
       cards.push(card);
     }
@@ -295,7 +390,9 @@ async function main() {
   document.getElementById("dry-run-badge").hidden = !config.dry_run;
   document.getElementById("footer").textContent = `llm-console ${config.version}`;
 
-  const cards = buildTabs(config, new RunDialog());
+  const dialogs = { run: new RunDialog(), notice: new NoticeDialog() };
+  const cards = buildTabs(config, dialogs);
+  dialogs.notice.cards = cards;
   await Promise.all(cards.map((card) => card.loadLastJob()));
 }
 

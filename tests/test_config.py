@@ -30,6 +30,9 @@ def test_repo_config_loads():
     assert llama.variants["q4"].command.endswith(" -4bit")
     assert llama.stop.startswith("killall ") and llama.stop_before_run
     assert llama.ready.port == 8000 and llama.ready.process == "llama-server"
+    assert llama.running == "pgrep -x llama-server >/dev/null"
+    assert llama.exclusive_with == ["strata"] and strata.exclusive_with == ["llama-server"]
+    assert strata.running.startswith("strata launch --status --output json | jq -e ")
     assert config.tab("mac").sections == []
     assert config.ssh.identity == os.path.expanduser("~/.ssh/id_ecdsa")
     assert config.ssh.known_hosts == "/run/host-ssh/known_hosts"
@@ -105,3 +108,24 @@ def test_ready_port(url, port):
 def test_bad_ready(ready):
     with pytest.raises(ValidationError):
         Config.model_validate(minimal(sections=[{"id": "s", "label": "S", "ready": ready}]))
+
+
+def exclusive(a_extra=None, b_extra=None):
+    a = {"id": "a", "label": "A", "running": "check-a"} | (a_extra or {})
+    b = {"id": "b", "label": "B", "running": "check-b"} | (b_extra or {})
+    return minimal(sections=[a, b])
+
+
+def test_exclusive_with():
+    config = Config.model_validate(exclusive({"exclusive_with": ["b"]}, {"exclusive_with": ["a"]}))
+    assert config.tabs[0].section("a").exclusive_with == ["b"]
+
+
+@pytest.mark.parametrize(("a_extra", "b_extra", "match"), [
+    ({"exclusive_with": ["c"]}, None, "not another section"),
+    ({"exclusive_with": ["a"]}, None, "not another section"),
+    ({"exclusive_with": ["b"]}, {"running": None}, "needs a running command"),
+])
+def test_bad_exclusive_with(a_extra, b_extra, match):
+    with pytest.raises(ValidationError, match=match):
+        Config.model_validate(exclusive(a_extra, b_extra))

@@ -15,6 +15,8 @@ class FakeRunner:
     exit_codes: substring of the remote command -> exit code to return (None = timeout).
     raises:     substring of the remote command -> exception to raise.
     gate:       when set, every run waits for it (to keep a job running).
+    probe_codes: substring of the remote command -> exit code of a `running` check
+                 (default 1: the engine is off). Checks go to `probes`, not `calls`.
     """
 
     def __init__(self) -> None:
@@ -22,6 +24,15 @@ class FakeRunner:
         self.exit_codes: dict[str, int | None] = {}
         self.raises: dict[str, Exception] = {}
         self.gate: asyncio.Event | None = None
+        self.probes: list[str] = []
+        self.probe_codes: dict[str, int | None] = {}
+
+    async def probe(self, argv, timeout):
+        self.probes.append(argv[-1])
+        for needle, code in self.probe_codes.items():
+            if needle in argv[-1]:
+                return code, [f"probe output for {argv[-1]}"]
+        return 1, []
 
     @property
     def remote_commands(self) -> list[str]:

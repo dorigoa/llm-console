@@ -93,6 +93,14 @@ class Section(_Model):
     run_timeout: float = Field(default=900, gt=0)
     stop_timeout: float = Field(default=120, gt=0)
     ready: Ready | None = None
+    # Remote command telling whether this engine is on: exit 0 = on, 1 = off,
+    # anything else = could not tell. Needed when another section lists this one
+    # in exclusive_with.
+    running: str | None = None
+    # Sections of the same tab that cannot be on together with this one (same GPUs,
+    # same port): Run is refused, and the page says to stop them first, while one
+    # of them is on or has an operation in progress.
+    exclusive_with: list[Ident] = Field(default_factory=list)
 
     @field_validator("variants", mode="before")
     @classmethod
@@ -155,6 +163,15 @@ class Config(_Model):
             section_ids = [s.id for s in tab.sections]
             if len(section_ids) != len(set(section_ids)):
                 raise ValueError(f"tab {tab.id!r}: duplicate section ids: {section_ids}")
+            for section in tab.sections:
+                for other_id in section.exclusive_with:
+                    other = tab.section(other_id)
+                    if other is None or other is section:
+                        raise ValueError(f"section {section.id!r}: exclusive_with {other_id!r} "
+                                         f"is not another section of tab {tab.id!r}")
+                    if not other.running:
+                        raise ValueError(f"section {section.id!r}: exclusive_with {other_id!r} "
+                                         f"needs a running command in {other_id!r}")
         return self
 
     def tab(self, tab_id: str) -> Tab | None:

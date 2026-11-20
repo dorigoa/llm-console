@@ -31,6 +31,12 @@ async def test_index_is_served(client):
     assert "llm-console" in r.text
 
 
+@pytest.mark.parametrize("path", ["/", "/app.js", "/style.css", "/api/config"])
+async def test_browsers_revalidate(client, path):
+    r = await client.get(path)
+    assert r.headers["cache-control"] == "no-cache"
+
+
 async def test_config_view(client):
     r = await client.get("/api/config")
     data = r.json()
@@ -51,6 +57,8 @@ async def test_config_view(client):
     assert mac["sections"] == []
     # Commands never leave the server.
     assert ".sh" not in r.text and "~/" not in r.text and "killall" not in r.text
+    assert "pgrep" not in r.text and "jq" not in r.text
+    assert llama["exclusive_with"] == ["strata"] and strata["exclusive_with"] == ["llama-server"]
 
 
 @pytest.mark.parametrize("variant", list(SCRIPTS))
@@ -227,3 +235,72 @@ async def test_llama_dying_server_fails_the_run(client, fake_runner):
     job = await wait_done(client, r.json()["job_id"])
     assert job["state"] == "failed" and job["exit_code"] == 1
     assert len(fake_runner.calls) == 4
+
+
+STRATA_ON = "strata launch --status"
+LLAMA_ON = "pgrep -x llama-server"
+
+
+@pytest.mark.parametrize(("path", "variant", "on", "other"), [
+    (LLAMA, "q8", STRATA_ON, {"id": "strata", "label": "Strata", "reason": "on"}),
+    (STRATA, "q4", LLAMA_ON, {"id": "llama-server", "label": "llama-server", "reason": "on"}),
+])
+async def test_run_refused_while_the_other_engine_is_on(client, fake_runner, path, variant, on, other):
+    fake_runner.probe_codes[on] = 0
+    r = await client.post(f"{path}/run", json={"variant": variant})
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["conflicts"] == [other]
+    assert detail["message"].endswith(f"spegni {other['label']}")
+    assert fake_runner.calls == []  # nothing ran: not even the stop before the run
+    assert len(fake_runner.probes) == 1 and on in fake_runner.probes[0]
+    assert (await client.get(f"{path}/job")).json() == {"job": None}
+
+    conflicts = (await client.get(f"{path}/conflicts")).json()
+    assert conflicts == {"conflicts": [other]}
+
+
+async def test_run_checks_the_other_engine_first(client, fake_runner):
+    r = await client.post(f"{LLAMA}/run", json={"variant": "q8"})
+    assert r.status_code == 202
+    assert len(fake_runner.probes) == 1
+    assert fake_runner.probes[0].endswith(
+        "; strata launch --status --output json"
+        " | jq -e '(.ok or error(\"strata status failed\")) and (.running | length > 0)' >/dev/null")
+    assert (await client.get(f"{LLAMA}/conflicts")).json() == {"conflicts": []}
+
+
+async def test_run_refused_while_the_other_section_has_a_job(client, fake_runner):
+    fake_runner.gate = asyncio.Event()
+    first = await client.post(f"{STRATA}/run", json={"variant": "q8"})
+    assert first.status_code == 202
+    probes = len(fake_runner.probes)
+
+    r = await client.post(f"{LLAMA}/run", json={"variant": "q8"})
+    assert r.status_code == 409
+    assert r.json()["detail"]["conflicts"] == [{"id": "strata", "label": "Strata", "reason": "busy"}]
+    assert len(fake_runner.probes) == probes  # a running job is enough: no ssh check
+    # Stop is never refused.
+    assert (await client.post(f"{LLAMA}/stop")).status_code == 202
+    fake_runner.gate.set()
+    await wait_done(client, first.json()["job_id"])
+
+
+async def test_concurrent_runs_of_exclusive_sections(client, fake_runner):
+    fake_runner.gate = asyncio.Event()
+    a, b = await asyncio.gather(client.post(f"{LLAMA}/run", json={"variant": "q8"}),
+                                client.post(f"{STRATA}/run", json={"variant": "q8"}))
+    assert sorted([a.status_code, b.status_code]) == [202, 409]
+    fake_runner.gate.set()
+
+
+@pytest.mark.parametrize("code", [255, 5, None])
+async def test_failed_check_refuses_the_run(client, fake_runner, code):
+    fake_runner.probe_codes[STRATA_ON] = code
+    r = await client.post(f"{LLAMA}/run", json={"variant": "q8"})
+    assert r.status_code == 502
+    detail = r.json()["detail"]
+    assert detail["message"].startswith("Non riesco a verificare se Strata è acceso")
+    assert ("timeout" if code is None else f"exit {code}") in detail["message"]
+    assert fake_runner.calls == []
+    assert (await client.get(f"{LLAMA}/conflicts")).status_code == 502

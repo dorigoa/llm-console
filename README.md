@@ -22,6 +22,12 @@ Campi opzionali di una sezione:
   - Prima del Run controlla che la porta dell'`url` sia libera.
   - Dopo il Run aspetta che `process` ascolti su quella porta e che `url` risponda.
   - Se `process` muore, il Run fallisce subito.
+- **`running`**: comando remoto che dice se l'engine è acceso (exit 0 = acceso, 1 = spento, altro =
+  non verificabile).
+- **`exclusive_with: [id, …]`**: le sezioni della stessa tab che non possono essere accese insieme a
+  questa. Ognuna deve avere `running`. Mentre una di loro è accesa, o ha un job in corso, il Run viene
+  rifiutato (`409` con `conflicts`) e la pagina dice di spegnerla prima. La pagina lo chiede già al
+  clic su Run, con `GET /api/sections/{tab}/{section}/conflicts`.
 
 ## Sviluppo sul Mac
 
@@ -45,7 +51,8 @@ uv export --no-dev --no-hashes --no-header --no-emit-project -o requirements.txt
 | Metodo | Path | |
 |---|---|---|
 | GET | `/api/config` | tab e sezioni (senza comandi) |
-| POST | `/api/sections/{tab}/{section}/run` | body `{"variant": "q4"}` → 202 `{job_id}`, 409 se c'è già un job |
+| POST | `/api/sections/{tab}/{section}/run` | body `{"variant": "q4"}` → 202 `{job_id}`; 409 se c'è già un job o se una sezione di `exclusive_with` è accesa (`conflicts`); 502 se non si riesce a verificarlo |
+| GET | `/api/sections/{tab}/{section}/conflicts` | `{conflicts: [{id, label, reason: on/busy}]}`: cosa rifiuterebbe un Run adesso |
 | POST | `/api/sections/{tab}/{section}/stop` | → 202 `{job_id}`, 409 se c'è già un job |
 | GET | `/api/jobs/{id}` | stato, exit code, ultime 200 righe di output |
 | GET | `/api/sections/{tab}/{section}/job` | ultimo job della sezione |

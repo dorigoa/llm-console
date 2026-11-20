@@ -21,6 +21,8 @@ from .runner import Runner, build_ssh_argv
 log = logging.getLogger("llm_console")
 
 OUTPUT_LINES = 200
+# Seconds for a `running` check (strata launch --status takes ~0.4 s over ssh).
+CHECK_TIMEOUT = 20
 
 
 class JobState(StrEnum):
@@ -133,6 +135,33 @@ class SectionBusy(Exception):
         self.job = job
 
 
+@dataclass(frozen=True)
+class Conflict:
+    """A section listed in exclusive_with that is on ("on") or has a job running ("busy")."""
+
+    section: Section
+    reason: str
+
+    def to_dict(self) -> dict:
+        return {"id": self.section.id, "label": self.section.label, "reason": self.reason}
+
+
+class Conflicting(Exception):
+    def __init__(self, conflicts: list[Conflict]) -> None:
+        super().__init__(", ".join(c.section.id for c in conflicts))
+        self.conflicts = conflicts
+
+
+class CheckFailed(Exception):
+    """A `running` check answered neither 0 (on) nor 1 (off): Run cannot go ahead."""
+
+    def __init__(self, section: Section, exit_code: int | None, output: list[str]) -> None:
+        super().__init__(f"{section.id}: exit {exit_code}")
+        self.section = section
+        self.exit_code = exit_code
+        self.output = output
+
+
 class JobManager:
     def __init__(self, config: Config, runner: Runner, keep: int = 100) -> None:
         self.config = config
@@ -141,12 +170,52 @@ class JobManager:
         self._jobs: OrderedDict[str, Job] = OrderedDict()
         self._last: dict[tuple[str, str], Job] = {}
         self._tasks: set[asyncio.Task] = set()
+        # Check + start of a Run of an exclusive section, one at a time: two Runs of
+        # sections that exclude each other cannot both pass the check.
+        self._exclusive = asyncio.Lock()
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
 
     def last(self, tab_id: str, section_id: str) -> Job | None:
         return self._last.get((tab_id, section_id))
+
+    def running_job(self, tab_id: str, section_id: str) -> Job | None:
+        job = self._last.get((tab_id, section_id))
+        return job if job and job.state is JobState.RUNNING else None
+
+    async def conflicts(self, tab: Tab, section: Section) -> list[Conflict]:
+        """The sections in section.exclusive_with that are on now, or have a job running."""
+        found = []
+        host = self.config.hosts[tab.host]
+        for other_id in section.exclusive_with:
+            other = tab.section(other_id)
+            assert other is not None and other.running  # checked by Config
+            if self.running_job(tab.id, other.id):
+                found.append(Conflict(other, "busy"))
+                continue
+            argv = build_ssh_argv(self.config.ssh, host, other.running)
+            exit_code, output = await self.runner.probe(argv, CHECK_TIMEOUT)
+            log.info("check %s/%s running: exit %s", tab.id, other.id, exit_code)
+            if exit_code == 0:
+                found.append(Conflict(other, "on"))
+            elif exit_code != 1:
+                raise CheckFailed(other, exit_code, output)
+        return found
+
+    async def start_run(self, tab: Tab, section: Section, variant: str) -> Job:
+        """start() for a Run, refused (Conflicting) while an exclusive section is on."""
+        current = self.running_job(tab.id, section.id)
+        if current:
+            raise SectionBusy(current)
+        steps = run_steps(section, variant)
+        if not section.exclusive_with:
+            return self.start(tab, section, "run", variant, steps)
+        async with self._exclusive:
+            conflicts = await self.conflicts(tab, section)
+            if conflicts:
+                raise Conflicting(conflicts)
+            return self.start(tab, section, "run", variant, steps)
 
     def start(self, tab: Tab, section: Section, action: str, variant: str | None, steps: list[Step]) -> Job:
         # No await between the check and the registration: two requests cannot both pass.

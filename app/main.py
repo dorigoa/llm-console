@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import Config, Section, Tab, load_config
-from .jobs import JobManager, SectionBusy, run_steps, stop_steps
+from .jobs import CheckFailed, Conflicting, JobManager, SectionBusy, stop_steps
 from .runner import DryRunRunner, Runner, SubprocessRunner
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -62,6 +62,7 @@ def _config_view(config: Config, dry_run: bool) -> dict:
                     "label": s.label,
                     "variants": [{"id": k, "label": v.label or k} for k, v in s.variants.items()],
                     "default_variant": s.default_variant,
+                    "exclusive_with": s.exclusive_with,
                     "can_run": s.can_run,
                     "can_stop": s.can_stop,
                 }
@@ -91,6 +92,14 @@ def create_app(config_path: str | os.PathLike | None = None, runner: Runner | No
     app.state.config = config
     app.state.jobs = jobs
 
+    @app.middleware("http")
+    async def revalidate(request: Request, call_next):
+        # Without it browsers reuse a cached app.js or style.css after a deploy, and
+        # an old page can meet a new script. no-cache = keep it, but ask (ETag -> 304).
+        response = await call_next(request)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
     def find_section(tab_id: str, section_id: str) -> tuple[Tab, Section]:
         tab = config.tab(tab_id)
         section = tab.section(section_id) if tab else None
@@ -105,6 +114,17 @@ def create_app(config_path: str | os.PathLike | None = None, runner: Runner | No
     def busy(exc: SectionBusy) -> HTTPException:
         return HTTPException(409, {"message": "Un'operazione è già in corso per questa sezione",
                                    "job": exc.job.to_dict()})
+
+    def conflicting(section: Section, exc: Conflicting) -> HTTPException:
+        labels = " e ".join(c.section.label for c in exc.conflicts)
+        return HTTPException(409, {"message": f"Prima di avviare {section.label} spegni {labels}",
+                                   "conflicts": [c.to_dict() for c in exc.conflicts]})
+
+    def check_failed(exc: CheckFailed) -> HTTPException:
+        code = "timeout" if exc.exit_code is None else f"exit {exc.exit_code}"
+        return HTTPException(502, {"message": f"Non riesco a verificare se {exc.section.label} "
+                                              f"è acceso ({code})",
+                                   "output": "\n".join(exc.output[-20:])})
 
     # All handlers are `async def`: they run on the event loop, where the jobs live
     # (JobManager.start creates a task; a sync handler would run in a thread with no loop).
@@ -126,10 +146,24 @@ def create_app(config_path: str | os.PathLike | None = None, runner: Runner | No
         if body.variant not in section.variants:
             raise HTTPException(400, f"Variante sconosciuta: {body.variant}")
         try:
-            job = jobs.start(tab, section, "run", body.variant, run_steps(section, body.variant))
+            job = await jobs.start_run(tab, section, body.variant)
         except SectionBusy as exc:
             raise busy(exc) from None
+        except Conflicting as exc:
+            raise conflicting(section, exc) from None
+        except CheckFailed as exc:
+            raise check_failed(exc) from None
         return {"job_id": job.id, "job": job.to_dict()}
+
+    @app.get("/api/sections/{tab_id}/{section_id}/conflicts")
+    async def get_conflicts(tab_id: str, section_id: str) -> dict:
+        """What would refuse a Run now: the page asks before opening the Run dialog."""
+        tab, section = find_section(tab_id, section_id)
+        try:
+            found = await jobs.conflicts(tab, section)
+        except CheckFailed as exc:
+            raise check_failed(exc) from None
+        return {"conflicts": [c.to_dict() for c in found]}
 
     @app.post("/api/sections/{tab_id}/{section_id}/stop", status_code=202,
               dependencies=[Depends(require_csrf_header)])

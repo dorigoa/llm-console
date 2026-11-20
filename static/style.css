@@ -274,6 +274,15 @@ dialog h2 {
 
 dialog #run-host { margin: 2px 0 14px; font-size: 0.88rem; }
 
+#notice-text { margin: 10px 0 0; line-height: 1.5; }
+
+/* The card the notice dialog points at (the engine to stop). */
+.card { transition: box-shadow 0.2s, border-color 0.2s; }
+.card.attention {
+  border-color: var(--stop);
+  box-shadow: 0 0 0 2px var(--stop), var(--shadow);
+}
+
 fieldset {
   margin: 0;
   padding: 0;

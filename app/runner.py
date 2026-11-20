@@ -61,6 +61,10 @@ class Runner(Protocol):
         """Runs argv; returns its exit code, or None if it ran past `timeout` seconds and was killed."""
         ...
 
+    async def probe(self, argv: list[str], timeout: float) -> tuple[int | None, list[str]]:
+        """Runs a quick check (is an engine on?): its exit code, as run() does, and its output."""
+        ...
+
 
 class SubprocessRunner:
     async def run(self, argv: list[str], timeout: float, on_output: OutputFn) -> int | None:
@@ -88,6 +92,10 @@ class SubprocessRunner:
                 proc.kill()
                 await proc.wait()
 
+    async def probe(self, argv: list[str], timeout: float) -> tuple[int | None, list[str]]:
+        lines: list[str] = []
+        return await self.run(argv, timeout, lines.append), lines
+
 
 class DryRunRunner:
     """Runs nothing: reports the command and waits `delay` seconds, as a real job would."""
@@ -100,3 +108,7 @@ class DryRunRunner:
         await asyncio.sleep(min(self.delay, timeout))
         on_output("[dry-run] nessun comando eseguito")
         return 0
+
+    async def probe(self, argv: list[str], timeout: float) -> tuple[int | None, list[str]]:
+        # In dry-run every engine is off: Run is never refused.
+        return 1, [f"[dry-run] {shlex.join(argv)}"]

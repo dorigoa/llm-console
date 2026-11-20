@@ -74,3 +74,16 @@ async def test_dry_run_runs_nothing():
     code = await DryRunRunner(delay=0).run(["ssh", "alvise@h", "rm -rf ~"], 10, out.append)
     assert code == 0
     assert out[0] == "[dry-run] ssh alvise@h 'rm -rf ~'"
+
+
+@pytest.mark.anyio
+async def test_dry_run_probe_says_off():
+    code, out = await DryRunRunner(delay=5).probe(["ssh", "alvise@h", "pgrep x"], 10)
+    assert code == 1  # every engine is off: a dry-run Run is never refused
+    assert out == ["[dry-run] ssh alvise@h 'pgrep x'"]
+
+
+@pytest.mark.anyio
+async def test_subprocess_runner_probe_collects_output():
+    code, out = await SubprocessRunner().probe([sys.executable, "-c", "print('on')"], 10)
+    assert (code, out) == (0, ["on"])
