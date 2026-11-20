@@ -7,10 +7,16 @@ const POLL_MS = 2000;
 const POST_HEADERS = { "Content-Type": "application/json", "X-LLM-Console": "1" };
 const TAB_KEY = "llm-console.tab";
 
-// The model a Run of `variantId` serves (the variant id if it is no longer in the config).
-function modelOf(section, variantId) {
+// The model a Run of `variantId` serves (the variant id if it is no longer in the
+// config), with the chosen options: "Gemma-4-26B-A4B-it 8 bit (context 128k)".
+function modelOf(section, variantId, chosen = {}) {
   const variant = section.variants.find((v) => v.id === variantId);
-  return variant ? variant.model : variantId;
+  const model = variant ? variant.model : variantId;
+  const details = (section.options || []).filter((o) => chosen[o.id]).map((o) => {
+    const choice = o.choices.find((c) => c.id === chosen[o.id]);
+    return `${o.legend.toLowerCase()} ${choice ? choice.label : chosen[o.id]}`;
+  });
+  return details.length ? `${model} (${details.join(", ")})` : model;
 }
 
 // Status line of a job: what the engine is doing, with which model. A Run
@@ -19,7 +25,7 @@ function jobText(section, job) {
   const engine = section.label;
   const exit = job.exit_code != null ? ` (exit ${job.exit_code})` : "";
   if (job.action === "run") {
-    const model = modelOf(section, job.variant);
+    const model = modelOf(section, job.variant, job.options || {});
     return {
       running: `${engine} is launching ${model}…`,
       succeeded: `${model} is ready to serve requests`,
@@ -58,7 +64,7 @@ function errorMessage(res) {
   const detail = res.data && res.data.detail;
   if (typeof detail === "string") return detail;
   if (detail && detail.message) return detail.message;
-  return `Errore HTTP ${res.status}`;
+  return `HTTP error ${res.status}`;
 }
 
 function timeOf(iso) {
@@ -158,14 +164,14 @@ class SectionCard {
     };
   }
 
-  async start(action, variant) {
+  async start(action, variant, options = {}) {
     if (this.busy) return;
     const saved = this.saveStatus();
     this.pending = true;
     this.refreshButtons();
-    this.setStatus("running", jobText(this.section, { action, variant, state: "running" }));
+    this.setStatus("running", jobText(this.section, { action, variant, options, state: "running" }));
     try {
-      const res = await api("POST", `${this.base}/${action}`, action === "run" ? { variant } : undefined);
+      const res = await api("POST", `${this.base}/${action}`, action === "run" ? { variant, options } : undefined);
       if (res.status === 409 && res.data && res.data.detail && res.data.detail.conflicts) {
         // Another engine was switched on after the dialog opened.
         saved();
@@ -240,30 +246,61 @@ class SectionCard {
   }
 }
 
+// A group of radio buttons: [{id, label}], `checked` preselected.
+function radioGroup(name, items, checked) {
+  return items.map((item) => {
+    const label = document.createElement("label");
+    label.className = "radio";
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = name;
+    input.value = item.id;
+    input.checked = item.id === checked;
+    label.append(input, item.label);
+    return label;
+  });
+}
+
 class RunDialog {
   constructor() {
     this.el = document.getElementById("run-dialog");
     this.form = document.getElementById("run-form");
     this.radios = document.getElementById("run-radios");
+    this.optionsEl = document.getElementById("run-options");
     this.confirm = document.getElementById("run-confirm");
     this.card = null;
 
     document.getElementById("run-cancel").addEventListener("click", () => this.el.close());
-    this.radios.addEventListener("change", () => { this.confirm.disabled = !this.selected(); });
+    this.form.addEventListener("change", () => { this.confirm.disabled = !this.complete(); });
     // A click on the backdrop (outside the form) closes the dialog.
     this.el.addEventListener("click", (e) => { if (e.target === this.el) this.el.close(); });
     this.form.addEventListener("submit", (e) => {
       e.preventDefault();
-      const variant = this.selected();
-      if (!variant || !this.card) return;
+      if (!this.complete() || !this.card) return;
       this.el.close();
-      this.card.start("run", variant);
+      this.card.start("run", this.selected(), this.chosenOptions());
     });
   }
 
   selected() {
     const input = this.radios.querySelector("input:checked");
     return input ? input.value : null;
+  }
+
+  // Option id -> chosen choice id (only the options with a selection).
+  chosenOptions() {
+    const chosen = {};
+    for (const option of this.card ? this.card.section.options || [] : []) {
+      const input = this.optionsEl.querySelector(`input[name="option-${CSS.escape(option.id)}"]:checked`);
+      if (input) chosen[option.id] = input.value;
+    }
+    return chosen;
+  }
+
+  // Start is enabled once a variant and every option have a selection.
+  complete() {
+    const options = this.card ? this.card.section.options || [] : [];
+    return Boolean(this.selected()) && Object.keys(this.chosenOptions()).length === options.length;
   }
 
   open(card) {
@@ -275,19 +312,25 @@ class RunDialog {
     desc.textContent = card.section.description || "";
     desc.hidden = !card.section.description;
     document.getElementById("run-legend").textContent = card.section.variants_legend;
-    const preselected = card.section.default_variant;
-    this.radios.replaceChildren(...card.section.variants.map((variant) => {
-      const label = document.createElement("label");
-      label.className = "radio";
-      const input = document.createElement("input");
-      input.type = "radio";
-      input.name = "variant";
-      input.value = variant.id;
-      input.checked = variant.id === preselected;
-      label.append(input, variant.label);
-      return label;
+    this.radios.replaceChildren(...radioGroup("variant", card.section.variants, card.section.default_variant));
+    this.optionsEl.replaceChildren(...(card.section.options || []).map((option) => {
+      const fieldset = document.createElement("fieldset");
+      const legend = document.createElement("legend");
+      legend.textContent = option.legend;
+      fieldset.append(legend);
+      if (option.description) {
+        const desc = document.createElement("p");
+        desc.className = "option-desc muted";
+        desc.textContent = option.description;
+        fieldset.append(desc);
+      }
+      const radios = document.createElement("div");
+      radios.className = "radios";
+      radios.append(...radioGroup(`option-${option.id}`, option.choices, option.default));
+      fieldset.append(radios);
+      return fieldset;
     }));
-    this.confirm.disabled = !this.selected();
+    this.confirm.disabled = !this.complete();
     this.el.showModal();
   }
 }

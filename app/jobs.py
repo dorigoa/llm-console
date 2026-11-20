@@ -72,7 +72,8 @@ def wait_ready_command(ready: Ready) -> str:
     )
 
 
-def run_steps(section: Section, variant: str) -> list[Step]:
+def run_steps(section: Section, variant: str, chosen: dict[str, str] | None = None) -> list[Step]:
+    """chosen: option id -> choice id, as returned by section.choose()."""
     steps = []
     if section.stop_before_run and section.stop:
         steps.append(Step(section.stop, section.stop_timeout, check=False))
@@ -80,7 +81,7 @@ def run_steps(section: Section, variant: str) -> list[Step]:
     if ready and ready.process:
         steps.append(Step(port_free_command(ready), 30,
                           label=f"checking that port {ready.port} is free"))
-    steps.append(Step(section.variants[variant].command, section.run_timeout))
+    steps.append(Step(section.command(variant, chosen or {}), section.run_timeout))
     if ready:
         steps.append(Step(wait_ready_command(ready), ready.timeout,
                           label=f"waiting for {ready.url} to answer"))
@@ -103,6 +104,8 @@ class Job:
     action: str
     variant: str | None
     host: str
+    # Run: option id -> choice id (e.g. {"context": "128k"}).
+    options: dict[str, str] = field(default_factory=dict)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     state: JobState = JobState.RUNNING
     exit_code: int | None = None
@@ -122,6 +125,7 @@ class Job:
             "section": self.section,
             "action": self.action,
             "variant": self.variant,
+            "options": self.options,
             "host": self.host,
             "state": self.state.value,
             "exit_code": self.exit_code,
@@ -205,21 +209,27 @@ class JobManager:
                 raise CheckFailed(other, exit_code, output)
         return found
 
-    async def start_run(self, tab: Tab, section: Section, variant: str) -> Job:
-        """start() for a Run, refused (Conflicting) while an exclusive section is on."""
+    async def start_run(self, tab: Tab, section: Section, variant: str,
+                        chosen: dict[str, str] | None = None) -> Job:
+        """start() for a Run, refused (Conflicting) while an exclusive section is on.
+
+        chosen: option id -> choice id, as returned by section.choose().
+        """
         current = self.running_job(tab.id, section.id)
         if current:
             raise SectionBusy(current)
-        steps = run_steps(section, variant)
+        chosen = chosen or {}
+        steps = run_steps(section, variant, chosen)
         if not section.exclusive_with:
-            return self.start(tab, section, "run", variant, steps)
+            return self.start(tab, section, "run", variant, steps, chosen)
         async with self._exclusive:
             conflicts = await self.conflicts(tab, section)
             if conflicts:
                 raise Conflicting(conflicts)
-            return self.start(tab, section, "run", variant, steps)
+            return self.start(tab, section, "run", variant, steps, chosen)
 
-    def start(self, tab: Tab, section: Section, action: str, variant: str | None, steps: list[Step]) -> Job:
+    def start(self, tab: Tab, section: Section, action: str, variant: str | None, steps: list[Step],
+              options: dict[str, str] | None = None) -> Job:
         # No await between the check and the registration: two requests cannot both pass.
         key = (tab.id, section.id)
         current = self._last.get(key)
@@ -228,7 +238,7 @@ class JobManager:
 
         host = self.config.hosts[tab.host]
         job = Job(tab=tab.id, section=section.id, action=action, variant=variant,
-                  host=f"{host.user}@{host.address}")
+                  host=f"{host.user}@{host.address}", options=dict(options or {}))
         self._jobs[job.id] = job
         self._last[key] = job
         self._trim()
@@ -236,7 +246,8 @@ class JobManager:
         task = asyncio.create_task(self._execute(job, host, steps), name=f"job-{job.id}")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        log.info("job %s: %s/%s %s %s started", job.id, tab.id, section.id, action, variant or "")
+        log.info("job %s: %s/%s %s %s%s started", job.id, tab.id, section.id, action, variant or "",
+                 "".join(f" {o}={c}" for o, c in job.options.items()))
         return job
 
     async def _execute(self, job: Job, host: Host, steps: list[Step]) -> None:

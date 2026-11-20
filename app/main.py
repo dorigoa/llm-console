@@ -17,7 +17,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .config import Config, Section, Tab, load_config
 from .jobs import CheckFailed, Conflicting, JobManager, SectionBusy, stop_steps
@@ -36,6 +36,8 @@ log = logging.getLogger("llm_console")
 
 class RunRequest(BaseModel):
     variant: str
+    # Option id -> choice id; an option left out takes its default.
+    options: dict[str, str] = Field(default_factory=dict)
 
 
 def _env_flag(name: str) -> bool:
@@ -78,6 +80,16 @@ def _config_view(config: Config, dry_run: bool) -> dict:
                     "variants": [{"id": k, "label": v.label or k, "model": v.model or v.label or k}
                                  for k, v in s.variants.items()],
                     "default_variant": s.default_variant,
+                    "options": [
+                        {
+                            "id": option_id,
+                            "legend": o.legend,
+                            "description": o.description,
+                            "default": o.default,
+                            "choices": [{"id": k, "label": c.label or k} for k, c in o.choices.items()],
+                        }
+                        for option_id, o in s.options.items()
+                    ],
                     "exclusive_with": s.exclusive_with,
                     "can_run": s.can_run,
                     "can_stop": s.can_stop,
@@ -161,7 +173,11 @@ def create_app(config_path: str | os.PathLike | None = None, runner: Runner | No
         if body.variant not in section.variants:
             raise HTTPException(400, f"Unknown variant: {body.variant}")
         try:
-            job = await jobs.start_run(tab, section, body.variant)
+            chosen = section.choose(body.options)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        try:
+            job = await jobs.start_run(tab, section, body.variant, chosen)
         except SectionBusy as exc:
             raise busy(exc) from None
         except Conflicting as exc:

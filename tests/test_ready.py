@@ -99,6 +99,31 @@ def test_strata_running_command(tmp_path, stdout, exit_code, expected):
     assert result.returncode == expected, result.stderr
 
 
+@pytest.mark.parametrize(("section", "argv0"), [
+    ("turbofieldfare", "/Users/x/.local/lib/turbofieldfare/TurboFieldfareServer"),
+    ("mlx-lm", "/Users/x/.local/bin/mlx_lm.server"),
+])
+def test_mac_running_commands(section, argv0):
+    """config.yaml's `running` of the Mac engines, with a real pgrep -f: on while a
+    process with that path runs, off otherwise, although the pattern is in the
+    command line of the shell that runs it."""
+    command = load_config(REPO_CONFIG).tab("mac").section(section).running
+
+    def check():
+        return subprocess.run(["bash", "-c", command], timeout=10).returncode
+
+    if check() == 0:
+        pytest.skip(f"a real {section} is running on this machine")
+    # A process whose command line has that path, as the real servers do.
+    fake = subprocess.Popen(["bash", "-c", "sleep 30; :", argv0, "--model", "m"])
+    try:
+        assert check() == 0
+    finally:
+        fake.kill()
+        fake.wait()
+    assert check() == 1
+
+
 def test_ready_without_process_only_waits_for_the_url(run):
     ready = Ready(url="http://192.168.1.200:8000/v1/models")
     command = wait_ready_command(ready)

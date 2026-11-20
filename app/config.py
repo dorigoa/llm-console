@@ -7,6 +7,7 @@ variant ids and looks them up here.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
@@ -17,6 +18,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 
 Ident = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")]
+
+# {option-id} in a variant command: replaced by the value of the chosen option.
+# Not ${...} (a shell variable), and no spaces or commas ({ a; b; }, {a,b} are shell).
+PLACEHOLDER = re.compile(r"(?<!\$)\{([a-z0-9][a-z0-9_-]*)\}")
 
 
 class _Model(BaseModel):
@@ -52,6 +57,51 @@ class Variant(_Model):
     # The model this variant serves, for the status line ("Strata is launching
     # <model>…", "<model> is ready to serve requests"); None = the label.
     model: str | None = None
+
+
+class Choice(_Model):
+    # Replaces {<option id>} in the variant commands (trusted: it comes from here).
+    value: str
+    # Text of the radio button; None = the choice id.
+    label: str | None = None
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _number_is_text(cls, value):
+        # value: 262144 in YAML is an int.
+        return str(value) if isinstance(value, int) and not isinstance(value, bool) else value
+
+
+class Option(_Model):
+    """One more group of radio buttons in the Run dialog, e.g. the context size.
+
+    The browser sends only the id of the chosen choice; its value replaces
+    {<option id>} in the command of the variant being run.
+    """
+
+    legend: str
+    # One line under the legend.
+    description: str | None = None
+    # Choice id -> value (or {value, label}), in the order of the radio buttons.
+    choices: dict[Ident, Choice]
+    # Selected when the dialog opens, and used when a Run does not name a choice;
+    # None = none (a Run must then name one).
+    default: Ident | None = None
+
+    @field_validator("choices", mode="before")
+    @classmethod
+    def _plain_values(cls, value):
+        if isinstance(value, dict):
+            return {k: v if isinstance(v, dict) else {"value": v} for k, v in value.items()}
+        return value
+
+    @model_validator(mode="after")
+    def _check_choices(self) -> Option:
+        if not self.choices:
+            raise ValueError(f"option {self.legend!r} has no choices")
+        if self.default is not None and self.default not in self.choices:
+            raise ValueError(f"option {self.legend!r}: default {self.default!r} is not a choice")
+        return self
 
 
 class Ready(_Model):
@@ -94,6 +144,9 @@ class Section(_Model):
     variants: dict[Ident, Variant] = Field(default_factory=dict)
     # Radio button selected when the dialog opens; None = none.
     default_variant: Ident | None = None
+    # More radio groups in the Run dialog (option id -> Option), after the
+    # variants; every variant command must contain {<option id>}.
+    options: dict[Ident, Option] = Field(default_factory=dict)
     stop: str | None = None
     # Run first runs `stop` (its exit code is ignored), then the variant: switching
     # model is one click, with no --restart in the scripts.
@@ -130,6 +183,42 @@ class Section(_Model):
         if self.stop_before_run and not self.stop:
             raise ValueError(f"section {self.id!r}: stop_before_run needs a stop command")
         return self
+
+    @model_validator(mode="after")
+    def _placeholders_match_options(self) -> Section:
+        # A choice that changes nothing, or a {typo} sent to the shell, is a config error.
+        for variant_id, variant in self.variants.items():
+            used = set(PLACEHOLDER.findall(variant.command))
+            if unknown := used - set(self.options):
+                raise ValueError(f"section {self.id!r}, variant {variant_id!r}: "
+                                 f"no option {', '.join(sorted(unknown))}")
+            if missing := set(self.options) - used:
+                raise ValueError(f"section {self.id!r}, variant {variant_id!r}: the command does "
+                                 f"not use {', '.join('{' + m + '}' for m in sorted(missing))}")
+        return self
+
+    def choose(self, requested: dict[str, str]) -> dict[str, str]:
+        """Option id -> choice id for a Run: the requested ones, else the defaults.
+
+        ValueError for an unknown option or choice, or an option with no choice
+        and no default.
+        """
+        if unknown := set(requested) - set(self.options):
+            raise ValueError(f"Unknown option: {', '.join(sorted(unknown))}")
+        chosen = {}
+        for option_id, option in self.options.items():
+            choice = requested.get(option_id, option.default)
+            if choice is None:
+                raise ValueError(f"Choose a value for {option.legend}")
+            if choice not in option.choices:
+                raise ValueError(f"Unknown {option.legend} choice: {choice}")
+            chosen[option_id] = choice
+        return chosen
+
+    def command(self, variant_id: str, chosen: dict[str, str]) -> str:
+        """The variant's command with {<option id>} replaced by the chosen values."""
+        values = {o: self.options[o].choices[c].value for o, c in chosen.items()}
+        return PLACEHOLDER.sub(lambda m: values[m.group(1)], self.variants[variant_id].command)
 
     @property
     def can_run(self) -> bool:

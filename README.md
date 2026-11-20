@@ -8,7 +8,8 @@ The page has one tab per host and one card per engine. Each card has a green **R
   reports when the model's API answers.
 - **Stop** runs the engine's stop command.
 
-Today the Linux tab drives llama-server and Strata on a PC; the Mac tab is still to be done.
+The Linux tab drives llama-server and Strata on a PC; the Mac tab drives TurboFieldfareServer and
+mlx_lm.server on a Mac Studio.
 
 It runs in a rootless podman container on a small Linux box (the author's is a Raspberry Pi) and listens
 on `127.0.0.1:80`. Two optional front doors make it reachable:
@@ -23,8 +24,8 @@ Design notes and decisions (in Italian): [PLAN.md](PLAN.md).
 
 ## How it works
 
-- [`config.yaml`](config.yaml) is the only source of commands. The browser sends tab, section and variant
-  ids only, never a command.
+- [`config.yaml`](config.yaml) is the only source of commands. The browser sends tab, section, variant and
+  option ids only, never a command or a value that goes into one.
 - Every Run or Stop is a job: one or more `ssh user@host '<command>'` calls made from the container, with
   the key mounted from the host. The page polls the job and shows its output.
 - A Run can stop the engine first, so switching model is one click. It can also refuse to start while an
@@ -131,6 +132,13 @@ Both files are tracked by git. Your edits stay local, and updates keep them; see
 - For the llama-server checks in the example config: `curl`, `ss` (iproute2), `pgrep` (procps) and
   `killall` (psmisc).
 - For Strata: `~/.local/bin/strata`.
+- On the Mac of the example config:
+  - `~/TurboFF/run-turboff.sh`, `~/TurboFF/stop.sh`, `~/MLX/run-mlx.sh` and `~/MLX/stop.sh`. They are
+    kept on the Mac, not in this repository. A run script starts the server in the background, checks
+    the port first with `lsof`, and returns once the server answers or as soon as it exits. Each stop
+    script waits until its server has exited.
+  - `TurboFieldfareServer` in `~/.local/bin`.
+  - `mlx_lm.server` from `uv tool install mlx-lm`, also in `~/.local/bin`.
 
 ### 8. Install and start
 
@@ -222,6 +230,7 @@ fields:
 | `description` | One line under the card title and in the Run dialog, e.g. the models served. |
 | `variants_legend` | Legend over the radio buttons (default "Quantization"). |
 | `default_variant` | Radio button selected when the dialog opens. |
+| `options` | More radio groups in the Run dialog, after the variants: option id → `{legend, description, default, choices}`, where `choices` maps a choice id to its value, or to `{value, label}`. The chosen value replaces `{option id}` in the variant's command, and every variant must use every option. Example: the context size of TurboFieldfare, `-ctx {context}`. |
 | `stop_before_run` | Run first runs `stop`; its exit code is ignored. |
 | `run_timeout`, `stop_timeout` | Seconds before a step is killed. |
 | `ready: {url, process, timeout}` | A Run succeeds only once `url` answers 2xx (e.g. `/v1/models`). See below for `process`. |
@@ -232,6 +241,10 @@ fields:
 at once, such as `run-qwen3.8-27b.sh`. With `process`:
 - before the Run, the port of `url` must be free;
 - after the Run, `process` must also be listening on that port, and the Run fails as soon as it dies.
+
+These checks use `ss` and `pgrep -x`, so `process` needs a Linux host. macOS has no `ss`, and
+`mlx_lm.server` runs as `python`. On the Mac, leave `process` out and let the run script do the checks
+and the waiting, as `~/TurboFF/run-turboff.sh` does.
 
 Hosts, tabs and the ssh settings are at the top of the file; the comments there explain them.
 
@@ -268,7 +281,7 @@ ends in `-dirty` when there are uncommitted changes. `container/build.sh` alone 
 | Method | Path | |
 |---|---|---|
 | GET | `/api/config` | Tabs and sections, without commands. |
-| POST | `/api/sections/{tab}/{section}/run` | Body `{"variant": "q4"}` → 202 `{job_id}`. 409 if a job is running, or if a section in `exclusive_with` is on (`conflicts`); 502 if that cannot be checked. |
+| POST | `/api/sections/{tab}/{section}/run` | Body `{"variant": "q4"}`, or with options `{"variant": "gemma-q8", "options": {"context": "128k"}}` (an option left out takes its default) → 202 `{job_id}`. 400 for an unknown variant, option or choice. 409 if a job is running, or if a section in `exclusive_with` is on (`conflicts`); 502 if that cannot be checked. |
 | GET | `/api/sections/{tab}/{section}/conflicts` | `{conflicts: [{id, label, reason: on/busy}]}`: what would refuse a Run now. |
 | POST | `/api/sections/{tab}/{section}/stop` | → 202 `{job_id}`; 409 if a job is running. |
 | GET | `/api/jobs/{id}` | State, exit code, last 200 lines of output. |

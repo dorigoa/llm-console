@@ -306,6 +306,11 @@ legend {
   gap: 6px;
 }
 
+/* Run options (e.g. the context size): short choices, side by side. */
+#run-options fieldset { margin-top: 16px; }
+#run-options .radios { grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); }
+.option-desc { margin: -4px 0 8px; font-size: 0.85rem; }
+
 .radio {
   display: flex;
   align-items: center;

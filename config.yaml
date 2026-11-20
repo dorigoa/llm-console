@@ -109,4 +109,65 @@ tabs:
   - id: mac
     label: Mac
     host: mac
-    sections: []            # D3: still to be defined
+    # MacStudio1 (M4 Max, 36 GB). Both engines serve on 192.168.1.101:8080 (raspy
+    # forwards 127.0.0.1:9080 there, tailnet :9443) and only one fits in memory:
+    # they exclude each other. Their scripts start the server in the background
+    # and return once it answers, or fail as soon as it exits; they check that
+    # the port is free first (lsof: macOS has no ss, so no ready.process here).
+    sections:
+      - id: turbofieldfare
+        label: TurboFieldfare
+        description: "Models: Gemma-4-26B-A4B-it, Qwen3.6-35B-A3B"
+        variants_legend: Model
+        stop_before_run: true
+        run_timeout: 360    # the script itself gives up after 300 s
+        stop_timeout: 60
+        default_variant: gemma-q8
+        variants:           # .gturbo models in /Volumes/Home/TurboFieldFareModel
+          gemma-q8:
+            label: "Gemma-4-26B-A4B-it · 8 bit"
+            model: Gemma-4-26B-A4B-it 8 bit
+            command: ~/TurboFF/run-turboff.sh -model gemma4-8bit -ctx {context} -host 192.168.1.101 -port 8080
+          gemma-q4:
+            label: "Gemma-4-26B-A4B-it · 4 bit (QAT)"
+            model: Gemma-4-26B-A4B-it QAT 4 bit
+            command: ~/TurboFF/run-turboff.sh -model gemma4 -ctx {context} -host 192.168.1.101 -port 8080
+          qwen36-q4:
+            label: "Qwen3.6-35B-A3B · 4 bit"
+            model: Qwen3.6-35B-A3B 4 bit
+            command: ~/TurboFF/run-turboff.sh -model qwen36 -ctx {context} -host 192.168.1.101 -port 8080
+        options:            # {context} in the commands above
+          context:
+            legend: Context
+            description: Lower it when the Mac is short of memory (many apps open).
+            default: 256k
+            choices:        # tokens; the radio buttons show the ids
+              256k: 262144
+              128k: 131072
+              64k: 65536
+        stop: ~/TurboFF/stop.sh
+        # [/]: the pattern does not match the text of this very command.
+        running: pgrep -f '[/]TurboFieldfareServer( |$)' >/dev/null
+        exclusive_with: [mlx-lm]
+        ready:
+          url: http://192.168.1.101:8080/v1/models
+          timeout: 60
+      - id: mlx-lm
+        label: mlx_lm.server
+        description: "Model: Qwen3.8-27B"
+        variants_legend: Model
+        stop_before_run: true
+        run_timeout: 360    # the script itself gives up after 300 s
+        stop_timeout: 60
+        default_variant: qwen-q4
+        variants:           # from the Hugging Face cache in /Volumes/Home/hf_models
+          qwen-q4:
+            label: "Qwen3.8-27B · 4 bit"
+            model: Qwen3.8-27B 4 bit (MLX)
+            command: ~/MLX/run-mlx.sh -model mlx-community/Qwen3.8-27B-4bit -host 192.168.1.101 -port 8080
+        stop: ~/MLX/stop.sh
+        running: pgrep -f '[/]mlx_lm[.]server( |$)' >/dev/null
+        exclusive_with: [turbofieldfare]
+        ready:
+          url: http://192.168.1.101:8080/v1/models
+          timeout: 60

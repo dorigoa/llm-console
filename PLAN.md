@@ -37,7 +37,8 @@ sicurezza è la tailnet.
 - **D2 — llama-server (Tab Linux).** Implementata (§11): Qwen3.8-27B 8 bit (default) / 4 bit con lo
   script `~/Llama/run-qwen3.8-27b.sh`, Stop con `killall`. Mai acceso insieme a Strata: il Run
   dell'uno con l'altro acceso mostra un dialog "spegni prima …" (§11.3). Gemma più avanti.
-- **D3 — Tab Mac.** Contenuto non ancora definito → tab presente, vuota ("da configurare").
+- **D3 — Tab Mac.** → **Decisa (20/11)**: TurboFieldfareServer e mlx_lm.server su MacStudio1, con la
+  scelta del contesto nel dialog di Run (§14).
 - ~~**D4 — Script Strata.**~~ Chiusa: gli script sul PC hanno shebang e path assoluto. L'app prefissa comunque `PATH="$HOME/.local/bin:$PATH"` (innocuo, utile per i comandi futuri di llama-server/Mac).
 
 ---
@@ -317,14 +318,14 @@ e aggiornamento di `ai-console/gateway/tailscale-serve.sh` perché un suo `reset
 - [ ] Run → `q8` mentre gira q4: stop + avvio nello stesso job, poi Q8_K_XL in servizio.
 - [ ] Stop: job `succeeded`, nessun modello in servizio sul PC.
 - [ ] Doppio clic su Run: il secondo riceve 409, nessun doppio avvio.
-- [ ] Tab Mac visibile e vuota ("da configurare").
+- [ ] ~~Tab Mac visibile e vuota ("da configurare").~~ Superato: la tab Mac è configurata (§14).
 - [ ] `POST` con variante non in config → 400; nessun modo di far eseguire un comando arbitrario.
 
 ---
 
 ## 10. Fuori scope ora (sessione successiva)
 
-- Contenuto della Tab Mac (D3). Gemma in llama-server (§11).
+- ~~Contenuto della Tab Mac (D3). Gemma in llama-server (§11).~~ Fatti (§14, §13).
 - Indicatore di stato per sezione (via `strata launch --status --output json`, `/health` sulla porta 8000).
 - Log in streaming (SSE) invece del polling.
 
@@ -544,4 +545,84 @@ l'immagine lo copia in `/app/VERSION` e l'app lo legge.
         prodotto un'immagine con quella versione (immagine poi rimossa, servizio non toccato).
       - In produzione la pagina mostra le descrizioni dei modelli, e `/api/config` le quattro voci di
         llama-server e le cinque di Strata.
+
+## 14. Tab Mac: TurboFieldfare e mlx_lm.server (20/11/2026, D3)
+
+### 14.1 Il Mac
+
+| Cosa | Stato |
+|---|---|
+| Host | MacStudio1, `192.168.1.101`, M4 Max con 36 GB, macOS 27.2.1. È anche il Mac di sviluppo. raspy ci entra già via ssh con `id_ecdsa`, con la chiave dell'host in `known_hosts` |
+| Shell remota | `/bin/bash` 3.2. Via ssh il PATH comprende `~/.local/bin` e miniforge, da `~/.bashrc`; l'app prefissa comunque `$HOME/.local/bin` |
+| TurboFieldfareServer | `~/.local/bin/TurboFieldfareServer`, un wrapper che fa `exec` di `~/.local/lib/turbofieldfare/`, dal fork `~/turbo-fieldfare-fork`. Modelli `.gturbo` in `/Volumes/Home/TurboFieldFareModel/`: `gemma4-8bit` (mlx-community/gemma-4-26b-a4b-it-8bit, 25 GB), `gemma4` (gemma-4-26B-A4B-it-qat-4bit, 14 GB) e `qwen36` (Qwen3.6-35B-A3B-4bit, 18 GB). Resta in primo piano; default `127.0.0.1:8080`; espone `/v1/models`, `/v1/chat/completions`, `/v1/messages`, `/health` e `/metrics` |
+| mlx_lm.server | Quello di miniforge non partiva (transformers 5.14.1 vuole `huggingface-hub` <2.0, installato 2.0.0). Ora c'è `uv tool install mlx-lm` (mlx-lm 0.32.2) in `~/.local/bin`; miniforge non è stato toccato. Nota: `~/.local/bin` viene prima di miniforge nel PATH, quindi anche `mlx_lm.*` da terminale ora usa la versione uv |
+| Modelli MLX | `HF_HUB_CACHE=/Volumes/Home/hf_models`. Lo snapshot `main` di `mlx-community/Qwen3.8-27B-4bit` (`b935172e`) non aveva `generation_config.json`, `processor_config.json` e `video_preprocessor_config.json`; offline mlx_lm lo rifiutava. Il 20/11 sono stati scaricati quei tre file (i blob c'erano già, uguali a quelli dello snapshot `10c35caa`) |
+| raspy | `socat-fwd@macstudio1` (dal vecchio ai-console) inoltra `127.0.0.1:9080 → 192.168.1.101:8080`, sulla tailnet `:9443` |
+| Accesso ai file | Il processo di Claude Code sul Mac non può leggere `/Volumes/Home/TurboFieldFareModel` e `/Volumes/Home/hf_models` (permessi macOS, TCC); via ssh sì. Per le prove si usa ssh, come fa raspy |
+
+### 14.2 Come funziona
+
+- **Due card** nella tab Mac, **TurboFieldfare** e **mlx_lm.server**. Ascoltano entrambe su
+  `192.168.1.101:8080`, e con 36 GB ne sta in memoria una sola: sono esclusive (`exclusive_with`),
+  con lo stesso dialog "X is on" di §11.3. Run fa prima lo stop della stessa sezione (`stop_before_run`).
+- **TurboFieldfare**:
+  - modelli Gemma-4-26B-A4B-it 8 bit (default), Gemma QAT 4 bit e Qwen3.6-35B-A3B 4 bit;
+  - nel dialog c'è un secondo gruppo di radio, **Context**: 256k (default), 128k e 64k. L'hai provato
+    con 262144 e Gemma 8 bit; si riduce quando il Mac ha molte app aperte;
+  - lo script passa `--accept-any-model`, quindi il client può mandare qualsiasi nome di modello, come con
+    llama-server.
+- **mlx_lm.server**: solo Qwen3.8-27B 4 bit (`mlx-community/Qwen3.8-27B-4bit`).
+  - Il client deve omettere `model` oppure mandare l'id esatto. Con un altro nome risponde 404. Se
+    il nome è un altro modello della cache, mlx_lm lo carica, e la memoria ne risente.
+  - `--max-tokens 32768`, perché il default di mlx_lm è 512. Il campionamento resta quello di mlx_lm
+    (temperatura 0) se il client non lo manda.
+- **Script sul Mac** (non nel repo), nello stile di `~/Llama`: `~/TurboFF/run-turboff.sh -model … -ctx …
+  -host … -port …`, `~/TurboFF/stop.sh`, `~/MLX/run-mlx.sh -model … -host … -port …`, `~/MLX/stop.sh`.
+  - Il run controlla che la porta sia libera (`lsof`), avvia il server con `nohup … &` e il log
+    `./turboff-<ts>.log` o `./mlx-<ts>.log`, poi torna:
+    - quando `/v1/models` risponde (TurboFieldfare);
+    - quando una richiesta di prova di 1 token riceve risposta (mlx_lm). `/v1/models` risponde
+      anche se il caricamento del modello è fallito;
+    - oppure appena il server muore, con le ultime righe del log (exit 1); dopo 300 s, exit 1.
+  - Lo stop manda SIGTERM, aspetta fino a 30 s che il processo esca, poi SIGKILL. Se non c'era
+    niente da fermare è comunque exit 0.
+  - `running` = `pgrep -f '[/]TurboFieldfareServer( |$)'` o `'[/]mlx_lm[.]server( |$)'`. Il `[/]`
+    evita che il pattern trovi la shell che esegue il controllo.
+  - Niente `ready.process` sul Mac: usa `ss`, che macOS non ha, e mlx_lm gira come `python`. Il
+    `ready` dell'app conferma solo che `/v1/models` risponde (timeout 60 s).
+- **App** (generico, `options` in config):
+  - una sezione può avere `options`, cioè altri gruppi di radio nel dialog di Run: id dell'opzione →
+    `{legend, description, default, choices}`;
+  - il valore della scelta sostituisce `{id}` nel comando della variante. Il browser manda solo gli id
+    (`{"variant": "gemma-q8", "options": {"context": "128k"}}`) e i valori non escono mai dal server;
+  - la config viene rifiutata se una variante non usa un'opzione, o usa un `{nome}` che non è
+    un'opzione. `${VAR}`, `{a,b}`, `{1..3}` e `{ cmd; }` restano alla shell;
+  - opzione o scelta sconosciuta → 400. Il job registra le scelte, e la riga di stato le mostra:
+    "TurboFieldfare is launching Gemma-4-26B-A4B-it 8 bit (context 128k)…".
+
+### 14.3 Prove (20/11, via ssh sul Mac, come farà raspy)
+
+- TurboFieldfare:
+  - Gemma 4 bit a 64k: pronto in 2,5 s, resta acceso dopo la chiusura di ssh e genera a ~43 tok/s;
+  - Gemma 8 bit a 262144, Qwen3.6 a 262144 e Gemma 4 bit a 262144: tutti pronti;
+  - porta occupata → exit 1 con il processo che la tiene;
+  - contesto non valido → il server esce, e lo script fallisce subito con il log;
+  - stop in ~1 s; un secondo stop, con niente acceso, dà comunque exit 0.
+- mlx_lm.server:
+  - prima della correzione dello snapshot lo script falliva in 3 s, mostrando l'errore
+    (`IncompleteSnapshotError`) invece di "ready";
+  - dopo, Qwen3.8-27B 4 bit è caricato in 8 s e risponde.
+- App:
+  - 114 test verdi, con quelli nuovi per opzioni, tab Mac e `running` con un `pgrep -f` vero;
+  - nella preview dry-run: dialog con Model e Context, scelta 128k → `-ctx 131072` nel comando, stato
+    "(context 128k) is ready to serve requests";
+  - sul telefono le tre scelte stanno su una riga; il dialog di llama-server non è cambiato.
+
+### 14.4 Criteri di accettazione
+
+- [ ] Dopo il deploy, dalla console: Run di TurboFieldfare (Gemma 8 bit, 256k) → "ready to serve
+      requests", e `https://ai.exocomet-boga.ts.net:9443/v1/models` risponde dalla tailnet.
+- [ ] Run con 128k e con 64k: il log sul Mac mostra il contesto scelto.
+- [ ] Run di mlx_lm.server con TurboFieldfare acceso: dialog "TurboFieldfare is on", nessun job.
+- [ ] Stop di TurboFieldfare, poi Run di mlx_lm.server (Qwen3.8-27B 4 bit) → pronto, e Stop.
 

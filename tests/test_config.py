@@ -40,9 +40,88 @@ def test_repo_config_loads():
     assert llama.exclusive_with == ["strata"] and strata.exclusive_with == ["llama-server"]
     assert strata.running == ("out=$(~/.local/bin/strata launch --status 2>/dev/null) || exit 2; "
                               "printf '%s\\n' \"$out\" | grep -qE ': (starting|ready) at '")
-    assert config.tab("mac").sections == []
     assert config.ssh.identity == os.path.expanduser("~/.ssh/id_ecdsa")
     assert config.ssh.known_hosts == "/run/host-ssh/known_hosts"
+
+
+def test_repo_config_mac_tab():
+    config = load_config(REPO_CONFIG)
+    mac = config.tab("mac")
+    assert config.hosts[mac.host].address == "192.168.1.101"
+    turbo, mlx = mac.sections
+    assert (turbo.id, mlx.id) == ("turbofieldfare", "mlx-lm")
+    assert list(turbo.variants) == ["gemma-q8", "gemma-q4", "qwen36-q4"]
+    assert turbo.default_variant == "gemma-q8"
+    context = turbo.options["context"]
+    assert list(context.choices) == ["256k", "128k", "64k"] and context.default == "256k"
+    assert [c.value for c in context.choices.values()] == ["262144", "131072", "65536"]
+    # The default Run: Gemma 8 bit with 256k of context.
+    assert turbo.command("gemma-q8", turbo.choose({})) == (
+        "~/TurboFF/run-turboff.sh -model gemma4-8bit -ctx 262144 -host 192.168.1.101 -port 8080")
+    assert turbo.command("qwen36-q4", {"context": "64k"}).startswith(
+        "~/TurboFF/run-turboff.sh -model qwen36 -ctx 65536 ")
+    assert turbo.stop == "~/TurboFF/stop.sh" and turbo.stop_before_run
+    assert list(mlx.variants) == ["qwen-q4"] and mlx.default_variant == "qwen-q4" and not mlx.options
+    assert mlx.command("qwen-q4", {}) == (
+        "~/MLX/run-mlx.sh -model mlx-community/Qwen3.8-27B-4bit -host 192.168.1.101 -port 8080")
+    assert mlx.stop == "~/MLX/stop.sh" and mlx.stop_before_run
+    assert turbo.exclusive_with == ["mlx-lm"] and mlx.exclusive_with == ["turbofieldfare"]
+    for section in (turbo, mlx):
+        # No ready.process on macOS (no ss): the scripts check the port and the process.
+        assert section.ready.url == "http://192.168.1.101:8080/v1/models" and section.ready.process is None
+        assert section.running.startswith("pgrep -f '[/]")
+
+
+def with_options(command="run -ctx {context}", **option):
+    context = {"legend": "Context", "choices": {"big": "262144", "small": {"value": 65536, "label": "64k"}},
+               "default": "big"} | option
+    return minimal(sections=[{"id": "s", "label": "S", "variants": {"a": command}, "options": {"context": context}}])
+
+
+def test_options():
+    section = Config.model_validate(with_options()).tabs[0].sections[0]
+    choices = section.options["context"].choices
+    assert (choices["big"].value, choices["big"].label) == ("262144", None)
+    assert (choices["small"].value, choices["small"].label) == ("65536", "64k")
+    assert section.choose({}) == {"context": "big"}
+    assert section.choose({"context": "small"}) == {"context": "small"}
+    assert section.command("a", {"context": "small"}) == "run -ctx 65536"
+
+
+@pytest.mark.parametrize(("requested", "match"), [
+    ({"context": "huge"}, "Unknown Context choice: huge"),
+    ({"ctx": "big"}, "Unknown option: ctx"),
+    ({"context": "big; rm -rf ~"}, "Unknown Context choice"),
+])
+def test_choose_refuses(requested, match):
+    section = Config.model_validate(with_options()).tabs[0].sections[0]
+    with pytest.raises(ValueError, match=match):
+        section.choose(requested)
+
+
+def test_option_without_default_must_be_chosen():
+    section = Config.model_validate(with_options(default=None)).tabs[0].sections[0]
+    with pytest.raises(ValueError, match="Choose a value for Context"):
+        section.choose({})
+    assert section.choose({"context": "small"}) == {"context": "small"}
+
+
+def test_shell_braces_are_not_placeholders():
+    command = 'run -ctx {context} -home ${HOME} {a,b} { x; }; for i in {1..3}; do :; done'
+    section = Config.model_validate(with_options(command)).tabs[0].sections[0]
+    assert section.command("a", {"context": "big"}) == command.replace("{context}", "262144")
+
+
+@pytest.mark.parametrize(("command", "option", "match"), [
+    ("run -ctx {ctx}", {}, "no option ctx"),
+    ("run", {}, r"does not use \{context\}"),
+    ("run -ctx {context}", {"default": "medium"}, "default 'medium' is not a choice"),
+    ("run -ctx {context}", {"choices": {}}, "has no choices"),
+    ("run -ctx {context}", {"choices": {"Big": "1"}}, "choices"),
+])
+def test_bad_options(command, option, match):
+    with pytest.raises(ValidationError, match=match):
+        Config.model_validate(with_options(command, **option))
 
 
 def test_env_var_selects_config(tmp_path, monkeypatch):
