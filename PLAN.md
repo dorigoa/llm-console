@@ -476,7 +476,7 @@ laptop sono sulla tailnet. Per gli altri c'è un forwarder socat su raspy, confi
 - l'output dei job generato dall'app;
 - l'orario in formato `en-GB`.
 
-Anche i commenti nel codice sono in inglese. README e PLAN restano in italiano.
+Anche i commenti nel codice sono in inglese. PLAN.md resta in italiano; il README è in inglese dal 20/11, con installazione da zero e aggiornamento da GitHub.
 
 - [x] Dal Mac (LAN, non sulla tailnet): `http://192.168.1.40/` risponde (`/healthz`, `/api/config`, pagina).
 - [x] Il forwarder è attivo dopo il deploy, si ferma con `systemctl --user stop llm-console` e riparte
