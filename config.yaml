@@ -26,8 +26,27 @@ tabs:
     sections:
       - id: llama-server
         label: llama-server
-        variants: {}        # D2: commands still to be defined
-        stop: null          # D2
+        # run-qwen3.8-27b.sh starts llama-server in the background and returns at
+        # once; it writes ./llama-server-<timestamp>.log, hence the cd. `ready` makes
+        # Run fail at once if port 8000 is taken (Strata uses it too), then wait for
+        # /health. Run = stop (killall) then the chosen variant.
+        stop_before_run: true
+        run_timeout: 60
+        stop_timeout: 60
+        default_variant: q8
+        variants:           # in the order of the radio buttons
+          q8:
+            label: "8 bit · Qwen3.8-27B UD-Q8_K_XL"   # MTP embedded in the gguf
+            command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200
+          q4:
+            label: "4 bit · Qwen3.8-27B UD-Q4_K_XL"   # + MTP drafter gguf
+            command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -4bit
+        # -w: wait until it has exited (GPUs free); nothing running is not an error.
+        stop: killall -q -w llama-server || true
+        ready:
+          url: http://192.168.1.200:8000/health
+          process: llama-server
+          timeout: 600      # seconds: loading the model takes ~25 s when cached
       - id: strata
         label: Strata
         # Run = stop.sh (exit code ignored) then the chosen script: switching model is one click.

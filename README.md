@@ -12,6 +12,17 @@ comandi: il browser invia solo gli id di tab, sezione e variante. Una sezione se
 `variants` non ha Run e una senza `stop` non ha Stop: la pagina la mostra con i pulsanti
 disabilitati.
 
+Campi opzionali di una sezione:
+
+- **Variante come `{command, label}`**: oltre alla forma stringa. `label` è il testo del radio button.
+- **`default_variant`**: il radio preselezionato.
+- **`stop_before_run`**: il Run esegue prima lo `stop`.
+- **`ready: {url, process, timeout}`**: per uno script che avvia il server in background ed esce
+  subito, come `run-qwen3.8-27b.sh`.
+  - Prima del Run controlla che la porta dell'`url` sia libera.
+  - Dopo il Run aspetta che `process` ascolti su quella porta e che `url` risponda.
+  - Se `process` muore, il Run fallisce subito.
+
 ## Sviluppo sul Mac
 
 ```bash

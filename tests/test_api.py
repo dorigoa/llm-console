@@ -1,13 +1,15 @@
 import asyncio
 
+import httpx
 import pytest
 
-from app.main import CSRF_HEADER
+from app.main import CSRF_HEADER, create_app
 from conftest import wait_done
 
 pytestmark = pytest.mark.anyio
 
 STRATA = "/api/sections/linux/strata"
+LLAMA = "/api/sections/linux/llama-server"
 SCRIPTS = {
     "iq4": "~/Strata/run-unsloth-ud-iq4_xs-v31.sh",
     "q4": "~/Strata/run-unsloth-ud-q4_k_xl.sh",
@@ -38,14 +40,17 @@ async def test_config_view(client):
     assert linux["label"] == "Linux"
     assert linux["host"]["address"] == "192.168.1.200"
     llama, strata = linux["sections"]
-    assert llama == {"id": "llama-server", "label": "llama-server", "variants": [],
-                     "can_run": False, "can_stop": False}
-    assert strata["variants"] == ["iq4", "q4", "q5", "q6", "q8"]
+    assert [v["id"] for v in llama["variants"]] == ["q8", "q4"]
+    assert llama["variants"][0]["label"].startswith("8 bit · Qwen3.8-27B")
+    assert llama["default_variant"] == "q8"
+    assert llama["can_run"] and llama["can_stop"]
+    assert strata["variants"] == [{"id": v, "label": v} for v in ["iq4", "q4", "q5", "q6", "q8"]]
+    assert strata["default_variant"] is None
     assert strata["can_run"] and strata["can_stop"]
     assert mac["label"] == "Mac"
     assert mac["sections"] == []
     # Commands never leave the server.
-    assert ".sh" not in r.text and "~/" not in r.text
+    assert ".sh" not in r.text and "~/" not in r.text and "killall" not in r.text
 
 
 @pytest.mark.parametrize("variant", list(SCRIPTS))
@@ -114,9 +119,15 @@ async def test_unknown_section_is_404(client, fake_runner, path):
     assert fake_runner.calls == []
 
 
-async def test_unconfigured_section_is_400(client, fake_runner):
-    assert (await client.post("/api/sections/linux/llama-server/run", json={"variant": "q4"})).status_code == 400
-    assert (await client.post("/api/sections/linux/llama-server/stop")).status_code == 400
+async def test_unconfigured_section_is_400(tmp_path, fake_runner):
+    path = tmp_path / "c.yaml"
+    path.write_text("hosts: {pc: {address: 10.0.0.1, user: u}}\n"
+                    "tabs: [{id: linux, label: L, host: pc, sections: [{id: s, label: S}]}]\n")
+    app = create_app(path, runner=fake_runner)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test",
+                                 headers={CSRF_HEADER: "1"}) as client:
+        assert (await client.post("/api/sections/linux/s/run", json={"variant": "q4"})).status_code == 400
+        assert (await client.post("/api/sections/linux/s/stop")).status_code == 400
     assert fake_runner.calls == []
 
 
@@ -183,3 +194,36 @@ async def test_last_job_of_section(client):
 
 async def test_unknown_job_is_404(client):
     assert (await client.get("/api/jobs/doesnotexist")).status_code == 404
+
+
+@pytest.mark.parametrize(("variant", "suffix"), [("q8", "-host 192.168.1.200"), ("q4", "-host 192.168.1.200 -4bit")])
+async def test_llama_run_checks_port_runs_then_waits_ready(client, fake_runner, variant, suffix):
+    r = await client.post(f"{LLAMA}/run", json={"variant": variant})
+    job = await wait_done(client, r.json()["job_id"])
+    assert job["state"] == "succeeded"
+    stop, port_free, run, ready = fake_runner.remote_commands
+    assert stop.endswith("; killall -q -w llama-server || true")
+    assert "ss -ltnpH 'sport = :8000'" in port_free
+    assert run.endswith(f"; cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 {suffix}")
+    assert "pgrep -x llama-server" in ready and "http://192.168.1.200:8000/health" in ready
+    assert [timeout for _, timeout in fake_runner.calls] == [60, 30, 60, 600]
+    out = job["output_tail"]
+    assert "[controllo che la porta 8000 sia libera]" in out
+    assert "[attendo che llama-server risponda su http://192.168.1.200:8000/health]" in out
+    assert "$ while" not in out and "$ busy=" not in out  # generated scripts: shown by label
+
+
+async def test_llama_busy_port_stops_the_run(client, fake_runner):
+    fake_runner.exit_codes["ss -ltnpH 'sport = :8000'); if"] = 1
+    r = await client.post(f"{LLAMA}/run", json={"variant": "q8"})
+    job = await wait_done(client, r.json()["job_id"])
+    assert job["state"] == "failed"
+    assert len(fake_runner.calls) == 2  # stop + port check: run-qwen3.8-27b.sh never ran
+
+
+async def test_llama_dying_server_fails_the_run(client, fake_runner):
+    fake_runner.exit_codes["pgrep -x llama-server"] = 1
+    r = await client.post(f"{LLAMA}/run", json={"variant": "q4"})
+    job = await wait_done(client, r.json()["job_id"])
+    assert job["state"] == "failed" and job["exit_code"] == 1
+    assert len(fake_runner.calls) == 4

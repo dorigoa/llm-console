@@ -60,7 +60,8 @@ def _config_view(config: Config, dry_run: bool) -> dict:
                 {
                     "id": s.id,
                     "label": s.label,
-                    "variants": list(s.variants),
+                    "variants": [{"id": k, "label": v.label or k} for k, v in s.variants.items()],
+                    "default_variant": s.default_variant,
                     "can_run": s.can_run,
                     "can_stop": s.can_stop,
                 }

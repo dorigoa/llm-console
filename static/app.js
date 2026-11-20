@@ -196,17 +196,19 @@ class RunDialog {
     document.getElementById("run-title").textContent = `Run ${card.section.label}`;
     document.getElementById("run-host").textContent =
       `${card.tab.label} · ${card.tab.host.user}@${card.tab.host.address}`;
+    const preselected = card.section.default_variant;
     this.radios.replaceChildren(...card.section.variants.map((variant) => {
       const label = document.createElement("label");
       label.className = "radio";
       const input = document.createElement("input");
       input.type = "radio";
       input.name = "variant";
-      input.value = variant;
-      label.append(input, variant);
+      input.value = variant.id;
+      input.checked = variant.id === preselected;
+      label.append(input, variant.label);
       return label;
     }));
-    this.confirm.disabled = true;
+    this.confirm.disabled = !this.selected();
     this.el.showModal();
   }
 }

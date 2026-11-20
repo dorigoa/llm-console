@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 import uuid
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from .config import Config, Host, Section, Tab
+from .config import Config, Host, Ready, Section, Tab
 from .runner import Runner, build_ssh_argv
 
 log = logging.getLogger("llm_console")
@@ -35,13 +36,50 @@ class Step:
     timeout: float
     # False: the exit code is reported but does not fail the job (the stop before a run).
     check: bool = True
+    # Shown in the output instead of `$ command` (for the generated ready checks).
+    label: str | None = None
+
+
+def port_free_command(ready: Ready) -> str:
+    """Exit 1 if something already listens on the port of ready.url (another engine)."""
+    sport = shlex.quote(f"sport = :{ready.port}")
+    return (
+        f"busy=$(ss -ltnpH {sport}); "
+        f'if [ -n "$busy" ]; then echo "La porta {ready.port} è già in uso:" >&2; '
+        f'echo "$busy" >&2; exit 1; fi; '
+        f'echo "Porta {ready.port} libera."'
+    )
+
+
+def wait_ready_command(ready: Ready) -> str:
+    """Loops until ready.process listens on the port and ready.url answers; exit 1 if it dies."""
+    proc = shlex.quote(ready.process)
+    owner = shlex.quote(f'"{ready.process}"')  # how ss -p names the process: users:(("name",…
+    sport = shlex.quote(f"sport = :{ready.port}")
+    url = shlex.quote(ready.url)
+    return (
+        "while :; do "
+        f"if ! pgrep -x {proc} >/dev/null; then "
+        f'echo "{ready.process} non è più in esecuzione: vedi il suo log." >&2; exit 1; fi; '
+        f"if ss -ltnpH {sport} | grep -qF {owner} "
+        f"&& curl -fs -o /dev/null --max-time 5 {url}; then "
+        f"echo Pronto: {url}; exit 0; fi; "
+        "sleep 2; done"
+    )
 
 
 def run_steps(section: Section, variant: str) -> list[Step]:
     steps = []
     if section.stop_before_run and section.stop:
         steps.append(Step(section.stop, section.stop_timeout, check=False))
-    steps.append(Step(section.variants[variant], section.run_timeout))
+    ready = section.ready
+    if ready:
+        steps.append(Step(port_free_command(ready), 30,
+                          label=f"controllo che la porta {ready.port} sia libera"))
+    steps.append(Step(section.variants[variant].command, section.run_timeout))
+    if ready:
+        steps.append(Step(wait_ready_command(ready), ready.timeout,
+                          label=f"attendo che {ready.process} risponda su {ready.url}"))
     return steps
 
 
@@ -135,7 +173,7 @@ class JobManager:
         try:
             for step in steps:
                 argv = build_ssh_argv(self.config.ssh, host, step.command)
-                job.output.append(f"$ {step.command}")
+                job.output.append(f"[{step.label}]" if step.label else f"$ {step.command}")
                 log.info("job %s: ssh %s@%s %s", job.id, host.user, host.address, step.command)
                 exit_code = await self.runner.run(argv, step.timeout, job.output.append)
                 if exit_code is None:

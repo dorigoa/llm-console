@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -44,22 +45,69 @@ class Host(_Model):
     user: str
 
 
+class Variant(_Model):
+    command: str
+    # Text of the radio button; None = the variant id.
+    label: str | None = None
+
+
+class Ready(_Model):
+    """For a Run command that starts the server in the background and returns at once.
+
+    Before the command: the port of `url` must be free (after the stop, if any).
+    After it: wait until `process` is running, listens on that port and `url`
+    answers 2xx; the Run fails as soon as `process` is no longer running.
+    """
+
+    url: str
+    # Process name, as pgrep -x and ss -p show it (at most 15 characters).
+    process: Annotated[str, Field(pattern=r"^[A-Za-z0-9._-]{1,15}$")]
+    timeout: float = Field(default=600, gt=0)
+
+    @field_validator("url")
+    @classmethod
+    def _http_url(cls, value: str) -> str:
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise ValueError(f"not an http(s) URL: {value!r}")
+        return value
+
+    @property
+    def port(self) -> int:
+        parts = urlsplit(self.url)
+        return parts.port or (443 if parts.scheme == "https" else 80)
+
+
 class Section(_Model):
     id: Ident
     label: str
-    # Variant id -> remote command, in the order of the dialog's radio buttons.
-    variants: dict[Ident, str] = Field(default_factory=dict)
+    # Variant id -> remote command (or {command, label}), in the order of the
+    # dialog's radio buttons.
+    variants: dict[Ident, Variant] = Field(default_factory=dict)
+    # Radio button selected when the dialog opens; None = none.
+    default_variant: Ident | None = None
     stop: str | None = None
     # Run first runs `stop` (its exit code is ignored), then the variant: switching
     # model is one click, with no --restart in the scripts.
     stop_before_run: bool = False
     run_timeout: float = Field(default=900, gt=0)
     stop_timeout: float = Field(default=120, gt=0)
+    ready: Ready | None = None
 
     @field_validator("variants", mode="before")
     @classmethod
-    def _none_is_empty(cls, value):
-        return {} if value is None else value
+    def _plain_commands(cls, value):
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return {k: {"command": v} if isinstance(v, str) else v for k, v in value.items()}
+        return value
+
+    @model_validator(mode="after")
+    def _default_variant_exists(self) -> Section:
+        if self.default_variant is not None and self.default_variant not in self.variants:
+            raise ValueError(f"section {self.id!r}: default_variant {self.default_variant!r} is not a variant")
+        return self
 
     @model_validator(mode="after")
     def _stop_before_run_needs_stop(self) -> Section:

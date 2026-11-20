@@ -34,7 +34,8 @@ sicurezza è la tailnet.
   1. llm-console prende la 443, ai-console si sposta su un'altra porta HTTPS (es. `--https=7443`); *(raccomandata se llm-console deve essere l'URL "principale")*
   2. llm-console va su un'altra porta HTTPS (es. `--https=10443`), ai-console resta dov'è;
   3. llm-console sostituisce ai-console (che viene dismessa).
-- **D2 — llama-server (Tab Linux).** Comandi di Run/Stop e varianti non ancora definiti → la sezione viene creata ma con pulsanti disabilitati finché non sono in `config.yaml`.
+- **D2 — llama-server (Tab Linux).** Implementata (§11): Qwen3.8-27B 8 bit (default) / 4 bit con lo
+  script `~/Llama/run-qwen3.8-27b.sh`, Stop con `killall`. Gemma più avanti. Aperta **L2** (§11.3).
 - **D3 — Tab Mac.** Contenuto non ancora definito → tab presente, vuota ("da configurare").
 - ~~**D4 — Script Strata.**~~ Chiusa: gli script sul PC hanno shebang e path assoluto. L'app prefissa comunque `PATH="$HOME/.local/bin:$PATH"` (innocuo, utile per i comandi futuri di llama-server/Mac).
 
@@ -116,10 +117,15 @@ tabs:
     label: Linux
     host: pc
     sections:
-      - id: llama-server
+      - id: llama-server        # dettagli in §11
         label: llama-server
-        variants: {}            # D2: da definire
-        stop: null              # D2
+        stop_before_run: true
+        default_variant: q8     # radio preselezionato
+        variants:
+          q8: { label: "8 bit · Qwen3.8-27B UD-Q8_K_XL", command: "cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200" }
+          q4: { label: "4 bit · …", command: "… -4bit" }
+        stop: killall -q -w llama-server || true
+        ready: { url: "http://192.168.1.200:8000/health", process: llama-server, timeout: 600 }
       - id: strata
         label: Strata
         stop_before_run: true   # §5.3
@@ -309,15 +315,87 @@ e aggiornamento di `ai-console/gateway/tailscale-serve.sh` perché un suo `reset
 - [ ] Run → `q8` mentre gira q4: stop + avvio nello stesso job, poi Q8_K_XL in servizio.
 - [ ] Stop: job `succeeded`, nessun modello in servizio sul PC.
 - [ ] Doppio clic su Run: il secondo riceve 409, nessun doppio avvio.
-- [ ] llama-server e Tab Mac visibili con pulsanti disabilitati ("da configurare").
+- [ ] Tab Mac visibile e vuota ("da configurare").
 - [ ] `POST` con variante non in config → 400; nessun modo di far eseguire un comando arbitrario.
 
 ---
 
 ## 10. Fuori scope ora (sessione successiva)
 
-- Comandi di llama-server (D2) e contenuto della Tab Mac (D3).
-- Indicatore di stato per sezione (via `strata launch --status --output json`, health HTTP delle porte 8000/8080).
+- Contenuto della Tab Mac (D3). Gemma in llama-server (§11).
+- Indicatore di stato per sezione (via `strata launch --status --output json`, `/health` sulla porta 8000).
 - Log in streaming (SSE) invece del polling.
-- Nota: Strata e llama-server sul PC usano le stesse GPU (`--gpu 0,1`); un eventuale vincolo
-  "uno alla volta" tra sezioni si valuta quando D2 è definito.
+
+---
+
+## 11. Sezione llama-server (Tab Linux)
+
+**Run** apre un dialog con due voci di Qwen3.8-27B: **8 bit** (default, già selezionata) e **4 bit**.
+**Stop** ferma llama-server. Il job di Run finisce quando il server risponde, non quando lo script
+esce. Gemma verrà aggiunto più avanti.
+
+### 11.1 Stato sul PC (20/11/2026)
+
+| Cosa | Stato |
+|---|---|
+| Script | `~/Llama/run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 [-4bit]`, sistemato e provato da te (repo Llama, `bbb57db`). Default UD-Q8_K_XL con MTP nel gguf; `-4bit` → UD-Q4_K_XL + drafter `mtp-Qwen3.8-27B-Q4_0.gguf`. Avvia `llama-server` in background con `&` ed **esce subito**; log in `./llama-server-<timestamp>.log` (directory corrente) |
+| Stop | `killall llama-server`: nessuno script |
+| Gemma | Rimandato (gli `start-Gemma-*.sh` puntano a una cartella che non esiste) |
+| Rete | llama-server e Strata ascoltano **entrambi** su `192.168.1.200:8000`. Su raspy `socat-fwd@ubuntuhost` inoltra `127.0.0.1:8080 → 192.168.1.200:8000` e `tailscale serve` espone `:8443 → 127.0.0.1:8080`: l'endpoint della tailnet serve quello dei due che è acceso |
+| GPU | Entrambi usano le due Arc: llama-server e Strata non possono girare insieme (porta e GPU) |
+
+### 11.2 Come funziona nell'app
+
+**Run** (un solo job, passi in ordine):
+
+1. `killall -q -w llama-server || true` (`stop_before_run`): aspetta che un llama-server già acceso
+   sia uscito, così le GPU sono libere e passare da 8 a 4 bit è un clic.
+2. **Porta 8000 libera?** Se è ancora occupata (Strata), il job fallisce subito mostrando il processo
+   che la tiene, e lo script non viene lanciato.
+3. `cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 [-4bit]`. Il `cd` tiene i log in
+   `~/Llama` (via ssh la directory corrente sarebbe `~`).
+4. **Attesa**: ogni 2 s llama-server deve essere vivo (`pgrep -x`), deve ascoltare lui sulla 8000
+   (`ss -p`: non basta che qualcuno risponda) e `/health` deve dare 200 → `succeeded` ("Pronto").
+   Se il processo muore → `failed` subito; oltre 600 s → timeout.
+
+**Stop**: `killall -q -w llama-server || true`. È idempotente: va a buon fine anche se non c'era nulla.
+
+Codice (generico, riusabile per Gemma e per il Mac):
+
+- `config.py`: una variante è una stringa (solo il comando) o `{command, label}`. Nuovi campi di sezione:
+  `default_variant` e `ready {url, process, timeout}`.
+- `jobs.py`: da `ready` genera i passi 2 e 4 (`port_free_command`, `wait_ready_command`). Nell'output
+  compaiono con un'etichetta (`[attendo che llama-server risponda su …]`) invece dello script.
+- `app.js`: radio con le label; la variante di default è preselezionata e Avvia è subito attivo.
+  Strata è invariato: nessuna preselezione.
+- Test: 63, compresi quelli che eseguono gli script generati in bash con `ss`/`pgrep`/`curl` finti.
+- Prova sul PC con un server finto (`python3 -m http.server`):
+  - "Pronto" quando il processo giusto ascolta;
+  - "porta già in uso" con il nome del processo;
+  - "non è più in esecuzione" quando il processo manca;
+  - un processo lanciato con `&` (come fa lo script) sopravvive alla chiusura della sessione ssh dell'app.
+
+### 11.3 Decisione aperta
+
+- **L2: Strata acceso quando si lancia llama-server (e viceversa).**
+  - *Oggi*: il Run di llama-server fallisce subito con "La porta 8000 è già in uso" e Strata resta acceso.
+    Il Run di Strata con llama-server acceso non fa controlli: lo script di Strata dovrebbe fallire da
+    solo (da verificare).
+  - *Alternativa*: un gruppo esclusivo `pc-gpu`. Il Run di una sezione ferma prima l'altra nello stesso
+    job, il dialog lo dice ("Fermerà Strata"), e un job in corso su una delle due blocca anche l'altra (409).
+
+### 11.4 Fasi
+
+- [x] **L-A — Script sul PC**: tuo (`bbb57db`).
+- [x] **L-B — App**: §11.2, test, dry-run (dialog e sequenza dei passi verificati nel browser).
+- [ ] **L-C — Deploy** con `./deploy.sh`, poi i criteri qui sotto dalla tailnet.
+
+### 11.5 Criteri di accettazione
+
+- [ ] Run → 8 bit (preselezionato) → Avvia: `succeeded` solo dopo "Pronto"; il server resta acceso
+      dopo il job; `https://ai.exocomet-boga.ts.net:8443/v1/models` risponde dalla tailnet.
+- [ ] Run → 4 bit mentre gira 8 bit: killall e avvio nello stesso job, poi Q4_K_XL in servizio.
+- [ ] Run di llama-server con Strata acceso: `failed` subito ("porta 8000 già in uso"), Strata intatto
+      (con L2: Strata fermato, poi llama-server avviato).
+- [ ] Stop: nessun llama-server sul PC; un secondo Stop è comunque `succeeded`.
+- [ ] Un avvio che fallisce (es. GPU occupate) → `failed` appena il processo muore, non dopo 10 minuti.
