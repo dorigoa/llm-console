@@ -4,16 +4,20 @@ Run with:  uvicorn --factory app.main:create_app --host 0.0.0.0 --port 8080
 Env:       LLM_CONSOLE_CONFIG       config path (default: config.yaml in the checkout)
            LLM_CONSOLE_DRY_RUN=1    run nothing, only report the ssh commands
            LLM_CONSOLE_DRY_RUN_DELAY seconds a dry-run job takes (default 3)
+           LLM_CONSOLE_METRICS=0    do not poll the engines for the live lines
            LLM_CONSOLE_VERSION      shown in the footer (default: /app/VERSION in the image, else "dev")
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
 import sys
 from pathlib import Path
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from .config import Config, Section, Tab, load_config
 from .jobs import CheckFailed, Conflicting, JobManager, SectionBusy, stop_steps
+from .metrics import TIMEOUT, MetricsPoller
 from .runner import DryRunRunner, Runner, SubprocessRunner
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -91,6 +96,7 @@ def _config_view(config: Config, dry_run: bool) -> dict:
                         for option_id, o in s.options.items()
                     ],
                     "exclusive_with": s.exclusive_with,
+                    "has_metrics": s.metrics is not None,
                     "can_run": s.can_run,
                     "can_stop": s.can_stop,
                 }
@@ -104,7 +110,9 @@ def _config_view(config: Config, dry_run: bool) -> dict:
     }
 
 
-def create_app(config_path: str | os.PathLike | None = None, runner: Runner | None = None) -> FastAPI:
+def create_app(config_path: str | os.PathLike | None = None, runner: Runner | None = None,
+               metrics_client: httpx.AsyncClient | None = None) -> FastAPI:
+    """metrics_client: how the live lines reach the engines (tests pass a mock transport)."""
     _setup_logging()
     config = load_config(config_path)
     if runner is None:
@@ -114,11 +122,28 @@ def create_app(config_path: str | os.PathLike | None = None, runner: Runner | No
             runner = SubprocessRunner()
     dry_run = isinstance(runner, DryRunRunner)
     jobs = JobManager(config, runner)
-    log.info("llm-console: %d tabs, %s", len(config.tabs), "DRY-RUN" if dry_run else "ssh")
+    # The live lines only read the engines' own endpoints: they run in dry-run too.
+    poll_metrics = os.environ.get("LLM_CONSOLE_METRICS", "1").strip().lower() not in ("0", "false", "no")
+    poller = MetricsPoller(config, metrics_client or httpx.AsyncClient(timeout=TIMEOUT))
+    log.info("llm-console: %d tabs, %s, live metrics for %d sections%s", len(config.tabs),
+             "DRY-RUN" if dry_run else "ssh", len(poller.readers), "" if poll_metrics else " (off)")
 
-    app = FastAPI(title="llm-console", docs_url=None, redoc_url=None, openapi_url=None)
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
+        task = asyncio.create_task(poller.run(), name="metrics") if poll_metrics and poller.readers else None
+        try:
+            yield
+        finally:
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            await poller.client.aclose()
+
+    app = FastAPI(title="llm-console", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.config = config
     app.state.jobs = jobs
+    app.state.metrics = poller
 
     @app.middleware("http")
     async def revalidate(request: Request, call_next):
@@ -214,6 +239,11 @@ def create_app(config_path: str | os.PathLike | None = None, runner: Runner | No
         if job is None:
             raise HTTPException(404, "Unknown job")
         return job.to_dict()
+
+    @app.get("/api/metrics")
+    async def get_metrics() -> dict:
+        """The live line of every section with metrics: {"interval": s, "sections": {"tab/section": …}}."""
+        return poller.view()
 
     @app.get("/api/sections/{tab_id}/{section_id}/job")
     async def last_job(tab_id: str, section_id: str) -> dict:

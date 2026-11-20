@@ -59,6 +59,8 @@ tabs:
         # (the page says to stop the other first) while the other one is on.
         running: pgrep -x llama-server >/dev/null
         exclusive_with: [strata]
+        # Live line: /slots (phase, tokens so far) and /metrics (MTP drafts).
+        metrics: { kind: llama-server, url: "http://192.168.1.200:8000" }
         ready:
           url: http://192.168.1.200:8000/v1/models
           process: llama-server
@@ -105,6 +107,8 @@ tabs:
           out=$(~/.local/bin/strata launch --status 2>/dev/null) || exit 2;
           printf '%s\n' "$out" | grep -qE ': (starting|ready) at '
         exclusive_with: [llama-server]
+        # Live line: /metrics in JSON (what Strata's Monitor shows).
+        metrics: { kind: strata, url: "http://192.168.1.200:8000" }
 
   - id: mac
     label: Mac
@@ -149,6 +153,8 @@ tabs:
         # [/]: the pattern does not match the text of this very command.
         running: pgrep -f '[/]TurboFieldfareServer( |$)' >/dev/null
         exclusive_with: [mlx-lm]
+        # Live line: /metrics, with the running_* gauges of the fork (dorigoa/turbo-fieldfare-fork).
+        metrics: { kind: turbofieldfare, url: "http://192.168.1.101:8080" }
         ready:
           url: http://192.168.1.101:8080/v1/models
           timeout: 60
@@ -168,6 +174,8 @@ tabs:
         stop: ~/MLX/stop.sh
         running: pgrep -f '[/]mlx_lm[.]server( |$)' >/dev/null
         exclusive_with: [turbofieldfare]
+        # No metrics in mlx_lm.server: the live line only says whether it serves.
+        metrics: { kind: mlx-lm, url: "http://192.168.1.101:8080" }
         ready:
           url: http://192.168.1.101:8080/v1/models
           timeout: 60

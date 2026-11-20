@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 import yaml
@@ -104,6 +104,32 @@ class Option(_Model):
         return self
 
 
+def _http_url(value: str) -> str:
+    parts = urlsplit(value)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError(f"not an http(s) URL: {value!r}")
+    return value
+
+
+class Metrics(_Model):
+    """The live line of the card: the app polls the engine every few seconds.
+
+    `kind` says what the engine at `url` answers and how to read it (see
+    app/metrics.py): llama-server (/slots and /metrics), strata (/metrics in
+    JSON), turbofieldfare (/metrics), mlx-lm (no metrics: /health only). Engines
+    that share a port tell each other apart by those answers.
+    """
+
+    kind: Literal["llama-server", "strata", "turbofieldfare", "mlx-lm"]
+    # The engine's root, e.g. http://192.168.1.200:8000 (no path).
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def _root_url(cls, value: str) -> str:
+        return _http_url(value).rstrip("/")
+
+
 class Ready(_Model):
     """When a Run is done: after the command, wait until `url` answers 2xx.
 
@@ -121,10 +147,7 @@ class Ready(_Model):
     @field_validator("url")
     @classmethod
     def _http_url(cls, value: str) -> str:
-        parts = urlsplit(value)
-        if parts.scheme not in ("http", "https") or not parts.hostname:
-            raise ValueError(f"not an http(s) URL: {value!r}")
-        return value
+        return _http_url(value)
 
     @property
     def port(self) -> int:
@@ -162,6 +185,9 @@ class Section(_Model):
     # same port): Run is refused, and the page says to stop them first, while one
     # of them is on or has an operation in progress.
     exclusive_with: list[Ident] = Field(default_factory=list)
+    # The card's live line (idle, prefill, generating, tok/s, MTP acceptance);
+    # None = no live line.
+    metrics: Metrics | None = None
 
     @field_validator("variants", mode="before")
     @classmethod

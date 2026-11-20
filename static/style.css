@@ -13,6 +13,7 @@
   --ok: #1f8a4c;
   --err: #c43535;
   --warn: #a8670f;
+  --info: #1f6fbf;
   --code-bg: #f0f2f5;
   --shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 4px 12px rgb(0 0 0 / 4%);
   --radius: 10px;
@@ -30,6 +31,7 @@
     --ok: #4cc27f;
     --err: #f07272;
     --warn: #e0a243;
+    --info: #5fa8f0;
     --code-bg: #0c0f12;
     --shadow: 0 1px 2px rgb(0 0 0 / 40%);
   }
@@ -46,6 +48,7 @@
   --ok: #4cc27f;
   --err: #f07272;
   --warn: #e0a243;
+  --info: #5fa8f0;
   --code-bg: #0c0f12;
   --shadow: 0 1px 2px rgb(0 0 0 / 40%);
 }
@@ -192,6 +195,35 @@ summary:focus-visible {
 .card-status[data-state="failed"],
 .card-status[data-state="error"] { color: var(--err); }
 .card-status[data-state="timeout"] { color: var(--warn); }
+
+/* Live line: what the engine is doing now (polled every 3 s). */
+.card-live {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.92rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.card-live::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  transform: translateY(-1px);
+}
+.card-live[data-state="idle"]::before,
+.card-live[data-state="serving"]::before { background: var(--ok); }
+.card-live[data-state="prefill"]::before,
+.card-live[data-state="loading"]::before { background: var(--warn); }
+.card-live[data-state="generating"]::before,
+.card-live[data-state="busy"]::before { background: var(--info); }
+.card-live[data-state="prefill"],
+.card-live[data-state="generating"],
+.card-live[data-state="busy"] { color: var(--text); }
 
 .card-output summary {
   cursor: pointer;

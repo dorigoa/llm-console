@@ -326,7 +326,8 @@ e aggiornamento di `ai-console/gateway/tailscale-serve.sh` perché un suo `reset
 ## 10. Fuori scope ora (sessione successiva)
 
 - ~~Contenuto della Tab Mac (D3). Gemma in llama-server (§11).~~ Fatti (§14, §13).
-- Indicatore di stato per sezione (via `strata launch --status --output json`, `/health` sulla porta 8000).
+- ~~Indicatore di stato per sezione (via `strata launch --status --output json`, `/health` sulla porta 8000).~~
+  Fatto con la riga live (§15).
 - Log in streaming (SSE) invece del polling.
 
 ---
@@ -650,3 +651,115 @@ al Mac.
       TurboFieldfare apre il dialog con Model (Gemma 8 bit preselezionato) e Context (256k
       preselezionato); il dialog è stato chiuso con Cancel.
 
+
+## 15. Metriche live sulle card (20/11/2026)
+
+**Obiettivo (tuo).** Quando un engine è acceso e pronto, la web app su raspy lo interroga ogni 3 s e
+ricava:
+- se è idle;
+- se sta facendo prefill, e a quanti tok/s;
+- se sta generando, e a quanti tok/s;
+- l'acceptance rate di MTP, se l'engine la espone.
+
+### 15.1 Cosa espone ogni engine (letto nel codice, 20/11)
+
+| Engine | Endpoint | Fase e tok/s dal vivo | Acceptance MTP |
+|---|---|---|---|
+| llama-server (build `2d8a32502`) | `/metrics` Prometheus, con `--metrics` già negli script; `/slots` JSON, attivo di default (circa 1,3 KB, senza testo del prompt) | **Non da `/metrics`**. I contatori di prompt si aggiornano a fine prefill, quelli di generazione e MTP a fine richiesta (`callback_on_reset`). I gauge `*_tokens_seconds` sono medie tra due letture, ma degli stessi dati. **Sì da `/slots`**: `is_processing`, `n_prompt_tokens_processed` (cresce per batch), `next_token[0].n_decoded` (cresce per token) | `llamacpp:spec_decode_num_accepted_tokens_total` / `…_draft_tokens_total`, a fine richiesta. **Non serve `-lv 4`**: basta `--metrics` |
+| Strata 0.2.16 | `/metrics` in JSON (il suo Monitor); con `Accept: text/plain` risponde in Prometheus | `live.state` = reading / generating / idle / unloaded, `prompt_read` di `prompt_total`, `prefill_tok_s_mean`, `tok_s` | `totals.drafts_offered` / `drafts_accepted`, per richiesta finita |
+| TurboFieldfare (fork) | `/metrics` Prometheus | Prima: solo `requests_running`, più i tok/s dell'ultima richiesta finita. **Ora** i gauge `running_*` aggiunti al fork (§15.3) | Non c'è MTP |
+| mlx_lm.server 0.32 | Nessun `/metrics`: solo `/v1/models` e `/health` | — | — |
+
+### 15.2 Decisioni (20/11)
+
+- **llama-server**: `/slots` per lo stato e i tok/s, `/metrics` per l'acceptance.
+- **TurboFieldfare**: metriche dal vivo aggiunte al tuo fork (§15.3), non solo quelle di fine richiesta.
+- **mlx_lm.server**: la riga dice solo "Serving".
+- **Pagina**: una riga live su ogni card, sotto la riga di stato.
+
+### 15.3 Il fork di TurboFieldfare (`~/turbo-fieldfare-fork`)
+
+`ServerMetrics` tiene lo stato della richiesta che sta generando. Lo legge dagli eventi di avanzamento
+del runtime (prefill per chunk, decode per token), gli stessi che usa il progress log, e lo pubblica in
+`/metrics`:
+- `turbofieldfare_running_phase{phase="idle|prefill|decode"}`: 1 sulla fase in corso;
+- `turbofieldfare_generations_started_total`: cambia quando parte un'altra richiesta;
+- `turbofieldfare_running_prompt_tokens` e `…_prompt_done_tokens`: il prompt e la parte già nella KV;
+- `turbofieldfare_running_generated_tokens`;
+- `turbofieldfare_running_prefill_tokens_per_second`: media sui chunk, come la riga del progress log;
+- `turbofieldfare_running_decode_tokens_per_second`: media dal primo token.
+
+Dettagli:
+- in `HTTPServer` la richiesta comincia (`beginRunning`) quando inizia a generare e finisce con un
+  `defer`, comunque termini. Una fine in ritardo non cancella la richiesta successiva;
+- test: 3 nuovi in `ServerMetricsTests`, tutti verdi. Restano rossi 2 test di
+  `ServerProgressLogTests` (`slowChunksPrintOneSteadyLinePerChunk`, `eachLineReportsTheIntervalSinceThePreviousOne`).
+  Erano già rossi: si aspettano `pp_tok_s=`, mentre dal tuo commit `19a1ab1` "cosmetics" il log scrive
+  `tok/s=`;
+- **installazione**: ho compilato solo il prodotto `TurboFieldfareServer` (`swift build -c release
+  --product TurboFieldfareServer`) e l'ho copiato in `~/.local/lib/turbofieldfare/`. Il vecchio è in
+  `TurboFieldfareServer.bak-20261120`. Non ho usato `install.sh`, perché ricostruirebbe e installerebbe
+  anche l'app Mac, con le tue modifiche non committate in `AppModelHistory.swift`;
+- **non ancora committato** nel fork: `ServerMetrics.swift`, `HTTPServer.swift`, `ServerMetricsTests.swift`.
+
+### 15.4 Come funziona nell'app
+
+- **Config**: ogni sezione ha `metrics: {kind, url}`, con `kind` tra `llama-server`, `strata`,
+  `turbofieldfare` e `mlx-lm`.
+- **`app/metrics.py`**:
+  - un `MetricsPoller` parte con l'app (lifespan) e ogni 3 s interroga tutti gli engine insieme,
+    con timeout di 2,5 s, via HTTP diretto dal container (niente ssh);
+  - un lettore per tipo ricorda i conteggi del giro prima, per calcolare i tok/s;
+  - un engine è "on" se risponde nel suo formato. Così si distinguono llama-server e Strata sulla
+    8000 (Prometheus contro JSON), e TurboFieldfare e mlx_lm sulla 8080 (`/metrics` 200 contro 404).
+- **Velocità**:
+  - **generazione**: differenza tra due letture della stessa richiesta (3 s);
+  - **prefill di llama-server**: media dall'inizio della fase. llama-server legge il prompt a batch di
+    2048 token, circa 3 s l'uno, e una finestra di 3 s dava 682 o 1365 tok/s;
+  - **prefill di Strata e TurboFieldfare**: la loro media;
+  - **cambio di fase o di richiesta**: per un giro la velocità resta "…".
+- **Acceptance**: si legge dai contatori quando si muovono, cioè per le richieste finite tra due
+  letture; la prima volta è la media dall'avvio. Resta finché non finisce un'altra richiesta. La pagina
+  scrive "MTP acceptance N% (last request)".
+- **llama-server**: `n_prompt_tokens` di `/slots` è la parte di prompt già nella KV, non la lunghezza.
+  Per questo la riga dice "N prompt tokens so far", senza totale.
+- **API** `GET /api/metrics`: `{interval, sections: {"tab/section": {state, prefill_tok_s, gen_tok_s,
+  prompt_done, prompt_total, generated, acceptance, note, age_s}}}`.
+- **Pagina**:
+  - la riga live ha un pallino colorato: verde idle o serving, ambra prefill o loading, blu
+    generating, grigio off;
+  - il testo è per esempio "Prefill · 1,014 tok/s · 23,340 prompt tokens so far", oppure
+    "Generating · 37.3 tok/s · 236 tokens · MTP acceptance 26% (last request)";
+  - la pagina legge `/api/metrics` ogni 3 s, solo mentre è visibile;
+  - una lettura più vecchia di 10 s viene mostrata come "No recent metrics".
+- **Varie**:
+  - `httpx` è passato da dipendenza di sviluppo a dipendenza dell'app (`requirements.txt` rigenerato);
+  - in dry-run le righe live leggono gli engine veri; `LLM_CONSOLE_METRICS=0` le spegne.
+- **Test**: 137, compresi quelli nuovi di `tests/test_metrics.py` (risposte finte degli engine con
+  `httpx.MockTransport`).
+
+### 15.5 Prove dal vivo (20/11, preview sul Mac contro gli engine veri)
+
+- **TurboFieldfare**, Gemma 4 bit, prompt di 11.684 token:
+  - "Prefill · 210 → 179 tok/s · 1,152 / 11,684 prompt tokens";
+  - poi "Generating · 35–38 tok/s";
+  - poi "Idle". mlx_lm intanto è "Off".
+- **llama-server**, Qwen3.8-27B 8 bit con MTP, avviato dalla console di raspy:
+  - prompt di 77.762 token: prefill a circa 682 tok/s, generazione a 13–22 tok/s, acceptance 26,6%
+    (341 token accettati su 1280 proposti);
+  - prompt di 23.340 token, dopo la correzione della media: prefill a circa 1000 tok/s, generazione a
+    19–23 tok/s, acceptance 26,1%;
+  - Strata intanto è "Off".
+- **Strata** q4, prompt di 23.344 token:
+  - prefill a 694 → 1211 tok/s, con avanzamento;
+  - generazione a 35–45 tok/s;
+  - "Idle" con acceptance MTP 64%.
+- Alla fine ho spento tutto: le quattro card dicono "Off".
+
+### 15.6 Criteri di accettazione (dopo il deploy)
+
+- [ ] Su raspy le quattro card mostrano la riga live, e "Off" per gli engine spenti.
+- [ ] Una richiesta a ciascun engine acceso mostra prefill e generazione con i tok/s, poi Idle; per
+      llama-server e Strata con MTP, anche l'acceptance.
+- [ ] Il footer dice la nuova versione, e il container raggiunge via HTTP sia il PC (8000) sia il Mac
+      (8080).

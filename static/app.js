@@ -43,6 +43,46 @@ function jobText(section, job) {
 
 const ICON = { succeeded: "✓", failed: "✗", timeout: "⏱" };
 
+// Live line: older than this, the server's last reading is shown as stale.
+const LIVE_STALE_S = 10;
+
+function rateText(x) {
+  if (x == null) return "… tok/s";
+  return `${x >= 100 ? Math.round(x).toLocaleString("en-GB") : x.toFixed(1)} tok/s`;
+}
+
+// What an engine is doing now, from /api/metrics: {state, text, title}.
+function liveText(live) {
+  if (live.age_s > LIVE_STALE_S) return { state: "stale", text: "No recent metrics", title: "" };
+  const parts = [];
+  switch (live.state) {
+    case "off": parts.push("Off"); break;
+    case "loading": parts.push("Loading the model…"); break;
+    case "unloaded": parts.push("Idle · model unloaded"); break;
+    case "idle": parts.push("Idle"); break;
+    case "busy": parts.push("Busy"); break;
+    case "serving": parts.push("Serving · no metrics from this engine"); break;
+    case "prefill":
+      parts.push(`Prefill · ${rateText(live.prefill_tok_s)}`);
+      if (live.prompt_total) {
+        parts.push(`${(live.prompt_done ?? 0).toLocaleString("en-GB")} / ` +
+                   `${live.prompt_total.toLocaleString("en-GB")} prompt tokens`);
+      } else if (live.prompt_done != null) {   // llama-server: no prompt length while it reads
+        parts.push(`${live.prompt_done.toLocaleString("en-GB")} prompt tokens so far`);
+      }
+      break;
+    case "generating":
+      parts.push(`Generating · ${rateText(live.gen_tok_s)}`);
+      if (live.generated != null) parts.push(`${live.generated.toLocaleString("en-GB")} tokens`);
+      break;
+    default: parts.push(`Metrics: ${live.note || live.state}`);
+  }
+  if (live.acceptance != null && live.state !== "off" && live.state !== "loading") {
+    parts.push(`MTP acceptance ${Math.round(live.acceptance * 100)}% (last request)`);
+  }
+  return { state: live.state, text: parts.join(" · "), title: live.note || "" };
+}
+
 function storageGet(key) {
   try { return localStorage.getItem(key); } catch { return null; }
 }
@@ -91,6 +131,7 @@ class SectionCard {
     this.runBtn = node.querySelector('[data-action="run"]');
     this.stopBtn = node.querySelector('[data-action="stop"]');
     this.statusEl = node.querySelector(".card-status");
+    this.liveEl = node.querySelector(".card-live");
     this.outputEl = node.querySelector(".card-output");
     this.preEl = node.querySelector(".card-output pre");
     const configured = section.can_run || section.can_stop;
@@ -104,6 +145,20 @@ class SectionCard {
 
   get busy() {
     return this.pending || (this.job !== null && this.job.state === "running");
+  }
+
+  get key() {
+    return `${this.tab.id}/${this.section.id}`;
+  }
+
+  // The live line; live = null when the server has nothing (yet) for this section.
+  showLive(live) {
+    if (!this.section.has_metrics) return;
+    const shown = live ? liveText(live) : { state: "stale", text: "Waiting for metrics…", title: "" };
+    this.liveEl.hidden = false;
+    this.liveEl.dataset.state = shown.state;
+    this.liveEl.textContent = shown.text;
+    this.liveEl.title = shown.title;
   }
 
   refreshButtons() {
@@ -463,7 +518,33 @@ async function main() {
   const dialogs = { run: new RunDialog(), notice: new NoticeDialog() };
   const cards = buildTabs(config, dialogs);
   dialogs.notice.cards = cards;
+  pollMetrics(cards.filter((card) => card.section.has_metrics));
   await Promise.all(cards.map((card) => card.loadLastJob()));
+}
+
+// The live lines: what the server last read from each engine, every few seconds
+// (only while the page is visible).
+async function pollMetrics(cards) {
+  if (cards.length === 0) return;
+  cards.forEach((card) => card.showLive(null));
+  let interval = 3;
+  let lastOk = Date.now();
+  for (;;) {
+    if (!document.hidden) {
+      try {
+        const res = await api("GET", "/api/metrics");
+        if (res.ok) {
+          interval = res.data.interval || interval;
+          lastOk = Date.now();
+          cards.forEach((card) => card.showLive(res.data.sections[card.key] || null));
+        }
+      } catch { /* server unreachable: marked stale below */ }
+      if (Date.now() - lastOk > LIVE_STALE_S * 1000) {
+        cards.forEach((card) => card.showLive({ state: "stale", age_s: LIVE_STALE_S + 1 }));
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, interval * 1000));
+  }
 }
 
 main();

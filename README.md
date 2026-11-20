@@ -7,6 +7,8 @@ The page has one tab per host and one card per engine. Each card has a green **R
 - **Run** opens a dialog to pick a model or quantization, runs the matching script on the host, and
   reports when the model's API answers.
 - **Stop** runs the engine's stop command.
+- A **live line** says what the engine is doing now, updated every 3 seconds: off, idle, prefill or
+  generating, with the tokens per second and, with MTP, the share of drafted tokens accepted.
 
 The Linux tab drives llama-server and Strata on a PC; the Mac tab drives TurboFieldfareServer and
 mlx_lm.server on a Mac Studio.
@@ -30,6 +32,10 @@ Design notes and decisions (in Italian): [PLAN.md](PLAN.md).
   the key mounted from the host. The page polls the job and shows its output.
 - A Run can stop the engine first, so switching model is one click. It can also refuse to start while an
   engine that uses the same GPUs is on. It succeeds only once the model's API (`/v1/models`) answers.
+- Every 3 seconds the app reads each engine's own endpoints over HTTP, not ssh, for the live lines.
+  An engine counts as on when it answers the way that kind of engine does. Engines that share a port
+  tell each other apart that way: llama-server and Strata on the PC, TurboFieldfare and mlx_lm.server on
+  the Mac. See [Live metrics](#live-metrics).
 
 ## Install on Linux from scratch
 
@@ -138,7 +144,9 @@ Both files are tracked by git. Your edits stay local, and updates keep them; see
     cloned to `~/TurboFF` and `~/MLX`. A run script starts the server in the background, checks
     the port first with `lsof`, and returns once the server answers or as soon as it exits. Each stop
     script waits until its server has exited.
-  - `TurboFieldfareServer` in `~/.local/bin`.
+  - `TurboFieldfareServer` in `~/.local/bin`, built from
+    [dorigoa/turbo-fieldfare-fork](https://github.com/dorigoa/turbo-fieldfare-fork) for the live line's
+    `running_*` gauges.
   - `mlx_lm.server` from `uv tool install mlx-lm`, also in `~/.local/bin`.
 
 ### 8. Install and start
@@ -237,6 +245,7 @@ fields:
 | `ready: {url, process, timeout}` | A Run succeeds only once `url` answers 2xx (e.g. `/v1/models`). See below for `process`. |
 | `running` | Remote command telling whether the engine is on: exit 0 = on, 1 = off, anything else = cannot tell. |
 | `exclusive_with: [id, …]` | Sections of the same tab that cannot be on together with this one; each needs `running`. While one of them is on, or has a job running, Run is refused and the page says to stop it first. |
+| `metrics: {kind, url}` | The card's live line. `kind` is `llama-server`, `strata`, `turbofieldfare` or `mlx-lm`; `url` is the engine's root, e.g. `http://192.168.1.200:8000`. See [Live metrics](#live-metrics). |
 
 `process` in `ready` is optional. It is for a script that starts the server in the background and returns
 at once, such as `run-qwen3.8-27b.sh`. With `process`:
@@ -248,6 +257,21 @@ These checks use `ss` and `pgrep -x`, so `process` needs a Linux host. macOS has
 and the waiting, as `~/TurboFF/run-turboff.sh` does.
 
 Hosts, tabs and the ssh settings are at the top of the file; the comments there explain them.
+
+## Live metrics
+
+Every 3 seconds the app asks every engine with `metrics`, all at once, with a 2.5-second timeout. The
+page reads the latest answers from `/api/metrics`. What each kind of engine gives:
+
+| `kind` | Reads | Phase and speed while it runs | MTP acceptance |
+|---|---|---|---|
+| `llama-server` | `/slots` and `/metrics` (`--metrics`) | From `/slots`: prefill (prompt tokens read so far, no total) or generating (tokens so far). Prefill speed is the average since the phase began; generation speed is over the last 3 s. The `/metrics` counters move only when a prefill or a request ends, so they cannot give these. | `spec_decode_num_accepted_tokens_total` / `…_draft_tokens_total`, which move when a request ends: the line shows the last finished request. |
+| `strata` | `/metrics` in JSON (what Strata's Monitor shows) | Reading (prompt read of total, average speed) or generating (speed, tokens so far) | Drafts offered and accepted, from the finished requests |
+| `turbofieldfare` | `/metrics` | The `turbofieldfare_running_*` gauges of [dorigoa/turbo-fieldfare-fork](https://github.com/dorigoa/turbo-fieldfare-fork): phase, prompt progress, tokens so far, speeds. An older build says only busy or idle. | — (no MTP) |
+| `mlx-lm` | `/health` (and `/metrics` answering 404) | None: mlx_lm.server has no metrics, so the line only says it serves | — |
+
+An engine that does not answer, or answers like another kind, is shown as off; the reason is in the
+tooltip. In dry-run the live lines still read the real engines; `LLM_CONSOLE_METRICS=0` turns them off.
 
 ## Development
 
@@ -287,6 +311,7 @@ ends in `-dirty` when there are uncommitted changes. `container/build.sh` alone 
 | POST | `/api/sections/{tab}/{section}/stop` | → 202 `{job_id}`; 409 if a job is running. |
 | GET | `/api/jobs/{id}` | State, exit code, last 200 lines of output. |
 | GET | `/api/sections/{tab}/{section}/job` | The section's last job. |
+| GET | `/api/metrics` | `{interval, sections: {"tab/section": {state, prefill_tok_s, gen_tok_s, prompt_done, prompt_total, generated, acceptance, note, age_s}}}`: the last reading of each engine. `state` is `off`, `loading`, `unloaded`, `idle`, `busy`, `prefill`, `generating`, `serving` or `unknown`. |
 | GET | `/healthz` | `ok` |
 
 POSTs need the header `X-LLM-Console: 1` (CSRF protection), for example:

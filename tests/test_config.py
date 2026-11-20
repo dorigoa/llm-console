@@ -72,6 +72,32 @@ def test_repo_config_mac_tab():
         assert section.running.startswith("pgrep -f '[/]")
 
 
+def test_repo_config_metrics():
+    config = load_config(REPO_CONFIG)
+    found = {(t.id, s.id): (s.metrics.kind, s.metrics.url) for t in config.tabs for s in t.sections}
+    assert found == {
+        ("linux", "llama-server"): ("llama-server", "http://192.168.1.200:8000"),
+        ("linux", "strata"): ("strata", "http://192.168.1.200:8000"),
+        ("mac", "turbofieldfare"): ("turbofieldfare", "http://192.168.1.101:8080"),
+        ("mac", "mlx-lm"): ("mlx-lm", "http://192.168.1.101:8080"),
+    }
+
+
+@pytest.mark.parametrize(("metrics", "ok"), [
+    ({"kind": "strata", "url": "http://h:8000/"}, True),
+    ({"kind": "vllm", "url": "http://h:8000"}, False),
+    ({"kind": "strata", "url": "ftp://h"}, False),
+    ({"kind": "strata"}, False),
+])
+def test_metrics_config(metrics, ok):
+    data = minimal(sections=[{"id": "s", "label": "S", "metrics": metrics}])
+    if ok:
+        assert Config.model_validate(data).tabs[0].sections[0].metrics.url == "http://h:8000"
+    else:
+        with pytest.raises(ValidationError):
+            Config.model_validate(data)
+
+
 def with_options(command="run -ctx {context}", **option):
     context = {"legend": "Context", "choices": {"big": "262144", "small": {"value": 65536, "label": "64k"}},
                "default": "big"} | option

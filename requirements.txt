@@ -5,15 +5,28 @@ annotated-types==0.8.0
 anyio==4.16.0
     # via
     #   fastapi
+    #   httpx
     #   starlette
+certifi==2026.10.23
+    # via
+    #   httpcore
+    #   httpx
 click==8.5.1
     # via uvicorn
 fastapi==0.165.0
     # via llm-console
 h11==0.16.0
-    # via uvicorn
+    # via
+    #   httpcore
+    #   uvicorn
+httpcore==1.0.9
+    # via httpx
+httpx==0.28.1
+    # via llm-console
 idna==3.20
-    # via anyio
+    # via
+    #   anyio
+    #   httpx
 opentelemetry-api==1.45.2
     # via fastapi
 pydantic==2.14.4
