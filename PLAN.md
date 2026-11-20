@@ -831,6 +831,18 @@ sono i `timings` della risposta stessa, oppure i contatori dell'engine.
 
 ### 16.4 Criteri di accettazione (dopo il deploy)
 
-- [ ] Su raspy le intestazioni delle card mostrano host e porta.
-- [ ] Dopo una richiesta, a riposo, la seconda riga mostra prefill, generazione, contesto e (con MTP)
-      acceptance dell'ultima richiesta, uguali ai `timings` della risposta.
+Commit `38b4919`, pushato. Deploy il 20/11 alle 18:36 con `git pull --autostash && container/install.sh`
+su raspy. Prima nessuna sezione aveva un job in corso. Il log dice `live metrics for 4 sections`.
+
+- [x] Su raspy le intestazioni delle card mostrano host e porta. *20/11*: `/api/config` dà gli
+      `endpoint` `192.168.1.200:8000` (llama-server, Strata) e `192.168.1.101:8080` (TurboFieldfare,
+      mlx_lm); pagina, `app.js` e `style.css` serviti sono quelli nuovi.
+- [x] Dopo una richiesta, a riposo, la seconda riga mostra prefill, generazione, contesto e (con MTP)
+      acceptance dell'ultima richiesta, uguali ai `timings` della risposta. *20/11, `/api/metrics` di
+      raspy*, llama-server (Qwen 8 bit con MTP, avviato e fermato dalla console), 23.344 token di prompt
+      e 400 generati:
+      - console: prefill 967,3 tok/s, generazione 20,23 tok/s, contesto 23.743 / 262.144, acceptance 23,7%;
+      - `timings` della risposta: 967,1 e 20,18 tok/s, 216 di 911 draft accettati.
+- [x] Il footer dice la nuova versione (`v0.0.1-preprod-nomac-6-g38b4919`).
+- Strata e TurboFieldfare provati solo in locale (§16.3), non dopo il deploy. Alla fine tutti gli
+  engine sono spenti.
