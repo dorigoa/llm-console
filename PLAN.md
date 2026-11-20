@@ -620,9 +620,30 @@ l'immagine lo copia in `/app/VERSION` e l'app lo legge.
 
 ### 14.4 Criteri di accettazione
 
-- [ ] Dopo il deploy, dalla console: Run di TurboFieldfare (Gemma 8 bit, 256k) → "ready to serve
+Deploy di `72e8314` il 20/11 alle 14:20, con `git pull --autostash && container/install.sh` su raspy:
+il footer dice `v0.0.1-preprod-nomac-1-g72e8314`. Prima del deploy nessuna sezione aveva un job in corso.
+Le prove sotto sono state fatte dall'API della console su `192.168.1.40`, quindi via ssh dal container
+al Mac.
+
+- [x] Dopo il deploy, dalla console: Run di TurboFieldfare (Gemma 8 bit, 256k) → "ready to serve
       requests", e `https://ai.exocomet-boga.ts.net:9443/v1/models` risponde dalla tailnet.
-- [ ] Run con 128k e con 64k: il log sul Mac mostra il contesto scelto.
-- [ ] Run di mlx_lm.server con TurboFieldfare acceso: dialog "TurboFieldfare is on", nessun job.
-- [ ] Stop di TurboFieldfare, poi Run di mlx_lm.server (Qwen3.8-27B 4 bit) → pronto, e Stop.
+      *20/11 14:21*:
+      - `GET …/conflicts` delle due sezioni: nessun conflitto, in 0,6 s;
+      - Run `succeeded` in 6 s, con `-ctx 262144`;
+      - da raspy, `:9443/v1/models` → `mlx-community/gemma-4-26b-a4b-it-8bit`.
+- [x] Run con 128k e con 64k: il server sul Mac gira con il contesto scelto.
+      *20/11*: due Run in 4 s ciascuno; ognuno ha fermato il server precedente e lo ha riavviato con
+      `--max-context 131072`, poi `65536` (visto con `pgrep -lf`).
+- [x] Run di mlx_lm.server con TurboFieldfare acceso: rifiutato, nessun job.
+      *20/11*: `409` "Stop TurboFieldfare before starting mlx_lm.server", con `conflicts` TurboFieldfare
+      `on`.
+- [x] Stop di TurboFieldfare, poi Run di mlx_lm.server (Qwen3.8-27B 4 bit) → pronto, e Stop.
+      *20/11*:
+      - Stop in 1 s;
+      - Run `succeeded` in 8 s (modello caricato in 6 s);
+      - dalla tailnet `:9443/v1/chat/completions` risponde "Hi";
+      - Stop in 1 s; alla fine nessun engine acceso sul Mac.
+- [x] La pagina vera (tunnel ssh verso raspy:80) mostra la tab Mac con le due card. Il Run di
+      TurboFieldfare apre il dialog con Model (Gemma 8 bit preselezionato) e Context (256k
+      preselezionato); il dialog è stato chiuso con Cancel.
 
