@@ -2,7 +2,7 @@
 # It is the only source of commands: the browser sends only tab/section/variant ids.
 #
 # A section with no variants cannot Run, one with no stop cannot Stop: the page
-# shows it with the buttons disabled ("da configurare").
+# shows it with the buttons disabled ("not configured").
 # In the container this file is mounted read-only from ~/llm-console/config.yaml on
 # raspy: after a change, `systemctl --user restart llm-console` (no rebuild needed).
 
@@ -64,11 +64,13 @@ tabs:
           q6:  ~/Strata/run-unsloth-ud-q6_k_xl.sh
           q8:  ~/Strata/run-unsloth-ud-q8_k_xl.sh
         stop: ~/Strata/stop.sh
-        # .running lists the launches in state starting or ready. jq exits 0 if there
-        # is one, 1 if none; 4/5 (check failed, Run refused) if Strata reports an error.
+        # strata launch --status prints "<name>: <state> at <url>" for each launch in
+        # state starting or ready ("Nothing from `strata launch` is running." if none).
+        # Not --output json: with a launch running Strata prints that line after the
+        # JSON too. If strata itself fails: exit 2 (cannot tell, Run refused).
         running: >-
-          strata launch --status --output json
-          | jq -e '(.ok or error("strata status failed")) and (.running | length > 0)' >/dev/null
+          out=$(~/.local/bin/strata launch --status 2>/dev/null) || exit 2;
+          printf '%s\n' "$out" | grep -qE ': (starting|ready) at '
         exclusive_with: [llama-server]
 
   - id: mac

@@ -1,8 +1,9 @@
 # llm-console
 
 Web app che avvia e ferma le inference engine sugli host remoti (PC Linux, Mac) via ssh.
-Gira in un container podman rootless su **raspy**, su `127.0.0.1:80`, ed è raggiungibile
-dalla tailnet tramite `tailscale serve` su `https://ai.exocomet-boga.ts.net`.
+Gira in un container podman rootless su **raspy**, su `127.0.0.1:80`, ed è raggiungibile:
+- dalla tailnet, tramite `tailscale serve`, su `https://ai.exocomet-boga.ts.net`;
+- dalla LAN di casa su `http://192.168.1.40/`, tramite un forwarder socat su raspy (`container/lan.env`).
 Piano e decisioni: [PLAN.md](PLAN.md).
 
 ## Configurazione
@@ -68,12 +69,16 @@ curl -X POST -H 'X-LLM-Console: 1' -H 'Content-Type: application/json' \
 ## Container e deploy
 
 - `container/build.sh` costruisce l'immagine (`container` su macOS, podman su Linux).
-- `container/install.sh`, su raspy, costruisce l'immagine, installa la unit Quadlet
-  `container/llm-console.container` e riavvia il servizio.
+- `container/install.sh`, su raspy:
+  - costruisce l'immagine;
+  - installa la unit Quadlet `container/llm-console.container` e il forwarder per la LAN
+    `container/llm-console-lan.service` (socat, indirizzo in `container/lan.env`);
+  - riavvia il servizio. Il forwarder parte e si ferma insieme alla web app.
 - `./deploy.sh`, dal Mac, copia il checkout in `raspy:~/llm-console` e lancia `install.sh`.
 
 Prerequisiti su raspy (Fase 0 di PLAN.md): `net.ipv4.ip_unprivileged_port_start=80`,
 `~/.ssh/known_hosts` con la chiave del PC, lingering attivo. La regola Tailscale
 (`tailscale serve --bg --https=443 http://127.0.0.1:80`) si aggiunge a mano dopo il primo deploy.
 
-Log: `journalctl --user-unit llm-console -f` su raspy.
+Log su raspy: `journalctl --user-unit llm-console -f` (web app) e
+`journalctl --user-unit llm-console-lan -f` (forwarder LAN).

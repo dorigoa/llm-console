@@ -160,7 +160,7 @@ async def test_stop_failure_before_run_is_ignored(client, fake_runner):
     job = await wait_done(client, r.json()["job_id"])
     assert job["state"] == "succeeded"
     assert len(fake_runner.calls) == 2
-    assert "[exit 1, ignorato]" in job["output_tail"]
+    assert "[exit 1, ignored]" in job["output_tail"]
 
 
 async def test_stop_failure_fails_stop_job(client, fake_runner):
@@ -177,7 +177,7 @@ async def test_timeout(client, fake_runner):
     job = await wait_done(client, r.json()["job_id"])
     assert job["state"] == "timeout"
     assert job["exit_code"] is None
-    assert "timeout dopo 900 s" in job["output_tail"]
+    assert "timed out after 900 s" in job["output_tail"]
 
 
 async def test_runner_error_fails_job(client, fake_runner):
@@ -185,7 +185,7 @@ async def test_runner_error_fails_job(client, fake_runner):
     r = await client.post(f"{STRATA}/stop")
     job = await wait_done(client, r.json()["job_id"])
     assert job["state"] == "failed"
-    assert "[errore:" in job["output_tail"]
+    assert "[error:" in job["output_tail"]
     # The section is free again.
     assert (await client.post(f"{STRATA}/stop")).status_code == 202
 
@@ -216,8 +216,8 @@ async def test_llama_run_checks_port_runs_then_waits_ready(client, fake_runner, 
     assert "pgrep -x llama-server" in ready and "http://192.168.1.200:8000/health" in ready
     assert [timeout for _, timeout in fake_runner.calls] == [60, 30, 60, 600]
     out = job["output_tail"]
-    assert "[controllo che la porta 8000 sia libera]" in out
-    assert "[attendo che llama-server risponda su http://192.168.1.200:8000/health]" in out
+    assert "[checking that port 8000 is free]" in out
+    assert "[waiting for llama-server to answer on http://192.168.1.200:8000/health]" in out
     assert "$ while" not in out and "$ busy=" not in out  # generated scripts: shown by label
 
 
@@ -237,7 +237,7 @@ async def test_llama_dying_server_fails_the_run(client, fake_runner):
     assert len(fake_runner.calls) == 4
 
 
-STRATA_ON = "strata launch --status"
+STRATA_ON = "strata launch --status"  # the `running` command of Strata
 LLAMA_ON = "pgrep -x llama-server"
 
 
@@ -251,7 +251,7 @@ async def test_run_refused_while_the_other_engine_is_on(client, fake_runner, pat
     assert r.status_code == 409
     detail = r.json()["detail"]
     assert detail["conflicts"] == [other]
-    assert detail["message"].endswith(f"spegni {other['label']}")
+    assert detail["message"].startswith(f"Stop {other['label']} before starting ")
     assert fake_runner.calls == []  # nothing ran: not even the stop before the run
     assert len(fake_runner.probes) == 1 and on in fake_runner.probes[0]
     assert (await client.get(f"{path}/job")).json() == {"job": None}
@@ -264,9 +264,8 @@ async def test_run_checks_the_other_engine_first(client, fake_runner):
     r = await client.post(f"{LLAMA}/run", json={"variant": "q8"})
     assert r.status_code == 202
     assert len(fake_runner.probes) == 1
-    assert fake_runner.probes[0].endswith(
-        "; strata launch --status --output json"
-        " | jq -e '(.ok or error(\"strata status failed\")) and (.running | length > 0)' >/dev/null")
+    assert fake_runner.probes[0].endswith("; out=$(~/.local/bin/strata launch --status 2>/dev/null) || exit 2; "
+                                          "printf '%s\\n' \"$out\" | grep -qE ': (starting|ready) at '")
     assert (await client.get(f"{LLAMA}/conflicts")).json() == {"conflicts": []}
 
 
@@ -300,7 +299,7 @@ async def test_failed_check_refuses_the_run(client, fake_runner, code):
     r = await client.post(f"{LLAMA}/run", json={"variant": "q8"})
     assert r.status_code == 502
     detail = r.json()["detail"]
-    assert detail["message"].startswith("Non riesco a verificare se Strata è acceso")
+    assert detail["message"].startswith("Cannot tell whether Strata is on")
     assert ("timeout" if code is None else f"exit {code}") in detail["message"]
     assert fake_runner.calls == []
     assert (await client.get(f"{LLAMA}/conflicts")).status_code == 502

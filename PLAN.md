@@ -387,9 +387,14 @@ da spegnere si evidenzia e il focus va sul suo Stop. Nessuno stop automatico.
 - **Config**: ogni sezione ha `running` (comando remoto: exit 0 = acceso, 1 = spento, altro = non
   verificabile) e `exclusive_with` (le sezioni incompatibili).
   - llama-server: `pgrep -x llama-server`.
-  - Strata: `strata launch --status --output json | jq -e '(.ok or error(…)) and (.running | length > 0)'`.
-    `running` elenca i lanci in stato `starting` o `ready`, quindi copre anche il caricamento.
-    Se Strata segnala un errore, jq esce con 4 o 5.
+  - Strata: `out=$(~/.local/bin/strata launch --status) || exit 2; … | grep -qE ': (starting|ready) at '`.
+    `strata launch --status` stampa una riga `<nome>: <stato> at <url>` per ogni lancio in stato
+    `starting` o `ready`, quindi copre anche il caricamento; con nulla acceso stampa "Nothing from
+    `strata launch` is running.". Se `strata` stesso fallisce → exit 2, Run rifiutato.
+    - *Prima versione (`83a75db`) con `--output json | jq`, sbagliata*: con un lancio attivo Strata
+      stampa quella riga anche **dopo** il JSON, jq fallisce (exit 5) e il Run di llama-server con
+      Strata acceso dava "non riesco a verificare" invece del dialog. Successo il 20/11 alle 10:34
+      dalla console. Corretta con l'output testuale, come suggerito da te.
   - Tempi via ssh: circa 0,4 s per Strata e 0,3 s per llama-server.
 - **Quando si controlla**:
   - **al clic su Run**, con `GET /api/sections/{tab}/{section}/conflicts`, prima di aprire il dialog
@@ -424,13 +429,59 @@ da spegnere si evidenzia e il focus va sul suo Stop. Nessuno stop automatico.
       - llama-server ancora attivo dopo il job e in ascolto sulla 8000;
       - dalla tailnet `/v1/models` risponde e `/v1/chat/completions` genera a ~50 tok/s.
 - [ ] Run → 4 bit mentre gira 8 bit: killall e avvio nello stesso job, poi Q4_K_XL in servizio.
-- [ ] Run di llama-server con Strata acceso: dialog "Strata è acceso", nessun job, Strata intatto.
-- [x] Run di Strata con llama-server acceso: dialog "llama-server è acceso", nessun job.
+- [x] Run di llama-server con Strata acceso: dialog "Strata is on", nessun job, Strata intatto.
+      *20/11, Strata q4 acceso, controllo corretto (output testuale) in produzione:*
+      - `GET …/llama-server/conflicts` → Strata `on` in 0,3 s;
+      - `POST …/llama-server/run` → `409` "Stop Strata before starting llama-server" e nessun job;
+      - nella pagina reale (dal Mac, attraverso il socat della LAN) il dialog "Strata is on", e OK
+        evidenzia la card Strata;
+      - Strata è rimasto `ready`.
+- [x] Run di Strata con llama-server acceso: dialog "llama-server is on" (allora in italiano), nessun job.
       *20/11, con `83a75db` in produzione:*
       - `GET …/strata/conflicts` → llama-server `on` in 0,2 s;
       - `POST …/strata/run` → `409` e nessun job creato;
       - nella pagina reale (tunnel ssh verso raspy:80) Run di Strata mostra il dialog e OK evidenzia la
         card llama-server;
       - llama-server è rimasto acceso con lo stesso PID e Strata spento.
-- [ ] Stop: nessun llama-server sul PC; un secondo Stop è comunque `succeeded`.
+- [x] Stop: nessun llama-server sul PC; un secondo Stop è comunque `succeeded`.
+      *20/11 dal log della console*:
+      - Stop alle 10:32:59 `succeeded`, poi il controllo dice llama-server spento;
+      - Stop alle 10:39:41, con nulla acceso, `succeeded`.
 - [ ] Un avvio che fallisce (es. GPU occupate) → `failed` appena il processo muore, non dopo 10 minuti.
+
+## 12. Accesso dalla LAN di casa e interfaccia in inglese (20/11/2026)
+
+**LAN.** Dalla tailnet la console è su `https://ai.exocomet-boga.ts.net`, ma in casa solo raspy e il
+laptop sono sulla tailnet. Per gli altri c'è un forwarder socat su raspy, configurato nel progetto:
+
+- **Indirizzo**: `container/lan.env` contiene `LAN_ADDRESS=192.168.1.40` (wlan0, da DHCP),
+  `LAN_PORT=80` e `APP_ADDRESS=127.0.0.1:80`. Dalla LAN la console è su **http://192.168.1.40/**.
+- **Unità**: `container/llm-console-lan.service` è un'unità utente con
+  `socat TCP4-LISTEN:80,bind=192.168.1.40,fork,reuseaddr TCP4:127.0.0.1:80`.
+- **Avvio e arresto con la web app**:
+  - la Quadlet ha `Wants=llm-console-lan.service`, e l'unità socat ha `BindsTo=` e `After=llm-console.service`;
+  - `Restart=always` con `StartLimitIntervalSec=0` riprova finché all'avvio l'indirizzo Wi-Fi non c'è.
+- **`install.sh`**:
+  - rifiuta un `LAN_ADDRESS` che raspy non ha, o una porta occupata;
+  - installa l'unità in `~/.config/systemd/user`;
+  - controlla `/healthz` anche sull'indirizzo della LAN.
+- **Se il DHCP cambia l'indirizzo di raspy**: aggiornare `lan.env` e rifare `./deploy.sh`.
+  Meglio una prenotazione DHCP sul router.
+- **Sicurezza**: nessuna autenticazione, come sulla tailnet; i POST richiedono `X-LLM-Console: 1`. Il
+  firewall di raspy accetta tutto in ingresso.
+
+**Inglese.** Tutto ciò che la pagina mostra è in inglese:
+- testi, dialog e stati della pagina;
+- i messaggi dell'API;
+- l'output dei job generato dall'app;
+- l'orario in formato `en-GB`.
+
+Anche i commenti nel codice sono in inglese. README e PLAN restano in italiano.
+
+- [x] Dal Mac (LAN, non sulla tailnet): `http://192.168.1.40/` risponde (`/healthz`, `/api/config`, pagina).
+- [x] Il forwarder è attivo dopo il deploy, si ferma con `systemctl --user stop llm-console` e riparte
+      con la web app, anche dopo un restart.
+      - Primo tentativo: allo stop finiva `failed`, perché socat esce con 143 su SIGTERM.
+      - Corretto con `SuccessExitStatus=143`: ora finisce `inactive`.
+- [ ] Al prossimo reboot di raspy: il forwarder riparte da solo, anche se il Wi-Fi arriva dopo la web app.
+

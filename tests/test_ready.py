@@ -1,11 +1,14 @@
-"""The generated ready checks, run by a real bash with stub ss, pgrep, curl and sleep."""
+"""Shell checks run by a real bash with stub commands: the generated ready checks
+(stub ss, pgrep, curl, sleep) and the `running` command of Strata in config.yaml."""
 
+import shlex
 import subprocess
 
 import pytest
 
-from app.config import Ready
+from app.config import Ready, load_config
 from app.jobs import port_free_command, wait_ready_command
+from conftest import REPO_CONFIG
 
 READY = Ready(url="http://192.168.1.200:8000/health", process="llama-server")
 LISTENER = 'LISTEN 0 512 192.168.1.200:8000 0.0.0.0:* users:(("llama-server",pid=42,fd=5))'
@@ -46,13 +49,13 @@ def run(tmp_path):
 def test_port_free(run):
     result = run(port_free_command(READY), ss=[""])
     assert result.returncode == 0
-    assert "Porta 8000 libera." in result.stdout
+    assert "Port 8000 is free." in result.stdout
 
 
 def test_port_busy(run):
     result = run(port_free_command(READY), ss=[OTHER])
     assert result.returncode == 1
-    assert "La porta 8000 è già in uso:" in result.stderr
+    assert "Port 8000 is already in use:" in result.stderr
     assert '"strata"' in result.stderr
 
 
@@ -60,18 +63,37 @@ def test_ready_after_loading(run):
     # Loading: not listening yet, then listening but /health not 200, then ready.
     result = run(wait_ready_command(READY), ss=["", LISTENER], curl=[22, 0])
     assert result.returncode == 0, result.stderr
-    assert "Pronto: http://192.168.1.200:8000/health" in result.stdout
+    assert "Ready: http://192.168.1.200:8000/health" in result.stdout
 
 
 def test_another_engine_on_the_port_is_not_ready(run):
     # Strata answers /health on 8000, then llama-server dies (port busy / out of memory).
     result = run(wait_ready_command(READY), ss=[OTHER], curl=[0], pgrep=[0, 0, 0, 1])
     assert result.returncode == 1
-    assert "llama-server non è più in esecuzione" in result.stderr
-    assert "Pronto" not in result.stdout
+    assert "llama-server is no longer running" in result.stderr
+    assert "Ready" not in result.stdout
 
 
 def test_server_died(run):
     result = run(wait_ready_command(READY), pgrep=[1])
     assert result.returncode == 1
-    assert "llama-server non è più in esecuzione" in result.stderr
+    assert "llama-server is no longer running" in result.stderr
+
+
+@pytest.mark.parametrize(("stdout", "exit_code", "expected"), [
+    ("ud-q4_k_xl-256k: ready at http://192.168.1.200:8000", 0, 0),
+    ("ud-q4_k_xl-256k: starting at http://192.168.1.200:8000", 0, 0),
+    ("Nothing from `strata launch` is running.", 0, 1),
+    ("", 2, 2),  # strata itself failed: cannot tell
+])
+def test_strata_running_command(tmp_path, stdout, exit_code, expected):
+    """config.yaml's `running` of Strata against a stub ~/.local/bin/strata."""
+    strata = tmp_path / ".local" / "bin" / "strata"
+    strata.parent.mkdir(parents=True)
+    strata.write_text('#!/bin/bash\n[ "$*" = "launch --status" ] || exit 9\n'
+                      f"printf '%s\\n' {shlex.quote(stdout)}\nexit {exit_code}\n")
+    strata.chmod(0o755)
+    command = load_config(REPO_CONFIG).tab("linux").section("strata").running
+    result = subprocess.run(["bash", "-c", command], env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == expected, result.stderr

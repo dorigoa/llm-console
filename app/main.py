@@ -104,26 +104,25 @@ def create_app(config_path: str | os.PathLike | None = None, runner: Runner | No
         tab = config.tab(tab_id)
         section = tab.section(section_id) if tab else None
         if tab is None or section is None:
-            raise HTTPException(404, "Sezione sconosciuta")
+            raise HTTPException(404, "Unknown section")
         return tab, section
 
     def require_csrf_header(request: Request) -> None:
         if request.headers.get(CSRF_HEADER) != "1":
-            raise HTTPException(403, f"Header {CSRF_HEADER}: 1 mancante")
+            raise HTTPException(403, f"Missing header {CSRF_HEADER}: 1")
 
     def busy(exc: SectionBusy) -> HTTPException:
-        return HTTPException(409, {"message": "Un'operazione è già in corso per questa sezione",
+        return HTTPException(409, {"message": "An operation is already running for this section",
                                    "job": exc.job.to_dict()})
 
     def conflicting(section: Section, exc: Conflicting) -> HTTPException:
-        labels = " e ".join(c.section.label for c in exc.conflicts)
-        return HTTPException(409, {"message": f"Prima di avviare {section.label} spegni {labels}",
+        labels = " and ".join(c.section.label for c in exc.conflicts)
+        return HTTPException(409, {"message": f"Stop {labels} before starting {section.label}",
                                    "conflicts": [c.to_dict() for c in exc.conflicts]})
 
     def check_failed(exc: CheckFailed) -> HTTPException:
         code = "timeout" if exc.exit_code is None else f"exit {exc.exit_code}"
-        return HTTPException(502, {"message": f"Non riesco a verificare se {exc.section.label} "
-                                              f"è acceso ({code})",
+        return HTTPException(502, {"message": f"Cannot tell whether {exc.section.label} is on ({code})",
                                    "output": "\n".join(exc.output[-20:])})
 
     # All handlers are `async def`: they run on the event loop, where the jobs live
@@ -142,9 +141,9 @@ def create_app(config_path: str | os.PathLike | None = None, runner: Runner | No
     async def run(tab_id: str, section_id: str, body: RunRequest) -> dict:
         tab, section = find_section(tab_id, section_id)
         if not section.can_run:
-            raise HTTPException(400, "Run non configurato per questa sezione")
+            raise HTTPException(400, "Run is not configured for this section")
         if body.variant not in section.variants:
-            raise HTTPException(400, f"Variante sconosciuta: {body.variant}")
+            raise HTTPException(400, f"Unknown variant: {body.variant}")
         try:
             job = await jobs.start_run(tab, section, body.variant)
         except SectionBusy as exc:
@@ -170,7 +169,7 @@ def create_app(config_path: str | os.PathLike | None = None, runner: Runner | No
     async def stop(tab_id: str, section_id: str) -> dict:
         tab, section = find_section(tab_id, section_id)
         if not section.can_stop:
-            raise HTTPException(400, "Stop non configurato per questa sezione")
+            raise HTTPException(400, "Stop is not configured for this section")
         try:
             job = jobs.start(tab, section, "stop", None, stop_steps(section))
         except SectionBusy as exc:
@@ -181,7 +180,7 @@ def create_app(config_path: str | os.PathLike | None = None, runner: Runner | No
     async def get_job(job_id: str) -> dict:
         job = jobs.get(job_id)
         if job is None:
-            raise HTTPException(404, "Job sconosciuto")
+            raise HTTPException(404, "Unknown job")
         return job.to_dict()
 
     @app.get("/api/sections/{tab_id}/{section_id}/job")

@@ -106,7 +106,7 @@ class DryRunRunner:
     async def run(self, argv: list[str], timeout: float, on_output: OutputFn) -> int | None:
         on_output(f"[dry-run] {shlex.join(argv)}")
         await asyncio.sleep(min(self.delay, timeout))
-        on_output("[dry-run] nessun comando eseguito")
+        on_output("[dry-run] nothing was run")
         return 0
 
     async def probe(self, argv: list[str], timeout: float) -> tuple[int | None, list[str]]:

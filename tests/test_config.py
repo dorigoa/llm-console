@@ -32,7 +32,8 @@ def test_repo_config_loads():
     assert llama.ready.port == 8000 and llama.ready.process == "llama-server"
     assert llama.running == "pgrep -x llama-server >/dev/null"
     assert llama.exclusive_with == ["strata"] and strata.exclusive_with == ["llama-server"]
-    assert strata.running.startswith("strata launch --status --output json | jq -e ")
+    assert strata.running == ("out=$(~/.local/bin/strata launch --status 2>/dev/null) || exit 2; "
+                              "printf '%s\\n' \"$out\" | grep -qE ': (starting|ready) at '")
     assert config.tab("mac").sections == []
     assert config.ssh.identity == os.path.expanduser("~/.ssh/id_ecdsa")
     assert config.ssh.known_hosts == "/run/host-ssh/known_hosts"

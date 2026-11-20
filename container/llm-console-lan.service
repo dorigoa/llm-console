@@ -1,0 +1,26 @@
+# systemd user unit on raspy: makes llm-console reachable from the home LAN.
+# socat listens on raspy's LAN address and forwards each connection to the web app
+# on loopback (addresses in lan.env, next to this file in ~/llm-console/container).
+#
+# Starts and stops with the web app: llm-console.container has
+# Wants=llm-console-lan.service, and this unit is BindsTo=llm-console.service.
+# Installed by container/install.sh into ~/.config/systemd/user (./deploy.sh from the Mac).
+# Logs: journalctl --user-unit llm-console-lan -f
+
+[Unit]
+Description=llm-console on the home LAN (socat to the web app)
+Documentation=man:socat(1)
+BindsTo=llm-console.service
+After=llm-console.service
+# At boot the Wi-Fi address can come after the web app: keep retrying, never give up.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+EnvironmentFile=%h/llm-console/container/lan.env
+ExecStart=/usr/bin/socat -d TCP4-LISTEN:${LAN_PORT},bind=${LAN_ADDRESS},fork,reuseaddr,keepalive TCP4:${APP_ADDRESS},keepalive
+Restart=always
+RestartSec=5
+# socat handles SIGTERM by exiting with 143: a normal stop, not a failure.
+SuccessExitStatus=143
+NoNewPrivileges=yes

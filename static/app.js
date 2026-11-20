@@ -8,10 +8,10 @@ const POST_HEADERS = { "Content-Type": "application/json", "X-LLM-Console": "1" 
 const TAB_KEY = "llm-console.tab";
 
 const ACTION_TEXT = {
-  running: (label) => `${label} in corso…`,
-  succeeded: (label) => `${label} completato`,
-  failed: (label, job) => `${label} fallito` + (job.exit_code != null ? ` (exit ${job.exit_code})` : ""),
-  timeout: (label) => `${label} interrotto per timeout`,
+  running: (label) => `${label} running…`,
+  succeeded: (label) => `${label} done`,
+  failed: (label, job) => `${label} failed` + (job.exit_code != null ? ` (exit ${job.exit_code})` : ""),
+  timeout: (label) => `${label} timed out`,
 };
 
 const ICON = { succeeded: "✓", failed: "✗", timeout: "⏱" };
@@ -41,7 +41,7 @@ function errorMessage(res) {
 }
 
 function timeOf(iso) {
-  return iso ? new Date(iso).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
+  return iso ? new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
 }
 
 class SectionCard {
@@ -90,7 +90,7 @@ class SectionCard {
   // Labels of the sections that cannot be on together with this one.
   get exclusiveLabels() {
     const ids = this.section.exclusive_with || [];
-    return this.tab.sections.filter((s) => ids.includes(s.id)).map((s) => s.label).join(" e ");
+    return this.tab.sections.filter((s) => ids.includes(s.id)).map((s) => s.label).join(" and ");
   }
 
   // Run: if another engine that excludes this one is on, say so instead of
@@ -104,7 +104,7 @@ class SectionCard {
     const saved = this.saveStatus();
     this.pending = true;
     this.refreshButtons();
-    this.setStatus("running", `Controllo che ${this.exclusiveLabels} sia spento…`);
+    this.setStatus("running", `Checking that ${this.exclusiveLabels} is off…`);
     let res;
     try {
       res = await api("GET", `${this.base}/conflicts`);
@@ -115,7 +115,7 @@ class SectionCard {
       this.refreshButtons();
     }
     if (!res.ok) {
-      this.setStatus("error", res.status ? errorMessage(res) : "Server non raggiungibile");
+      this.setStatus("error", res.status ? errorMessage(res) : "Server unreachable");
       return;
     }
     saved();
@@ -139,7 +139,7 @@ class SectionCard {
     const saved = this.saveStatus();
     this.pending = true;
     this.refreshButtons();
-    this.setStatus("running", `${action === "run" ? `Run ${variant}` : "Stop"}: invio…`);
+    this.setStatus("running", `${action === "run" ? `Run ${variant}` : "Stop"}: sending…`);
     try {
       const res = await api("POST", `${this.base}/${action}`, action === "run" ? { variant } : undefined);
       if (res.status === 409 && res.data && res.data.detail && res.data.detail.conflicts) {
@@ -156,7 +156,7 @@ class SectionCard {
         this.showJob(res.data.job);
       }
     } catch (err) {
-      this.setStatus("error", `Server non raggiungibile: ${err.message}`);
+      this.setStatus("error", `Server unreachable: ${err.message}`);
     } finally {
       this.pending = false;
       this.refreshButtons();
@@ -167,12 +167,12 @@ class SectionCard {
     this.job = job;
     const label = job.action === "run" ? `Run ${job.variant}` : "Stop";
     const text = ACTION_TEXT[job.state](label, job);
-    const when = job.state === "running" ? `dalle ${timeOf(job.started_at)}` : timeOf(job.ended_at);
+    const when = job.state === "running" ? `since ${timeOf(job.started_at)}` : timeOf(job.ended_at);
     this.setStatus(job.state, `${text} · ${when}`);
 
     this.outputEl.hidden = false;
     const atBottom = this.preEl.scrollHeight - this.preEl.scrollTop - this.preEl.clientHeight < 8;
-    this.preEl.textContent = job.output_tail || "(nessun output)";
+    this.preEl.textContent = job.output_tail || "(no output)";
     if (atBottom) this.preEl.scrollTop = this.preEl.scrollHeight;
     if (job.state === "failed" || job.state === "timeout") this.outputEl.open = true;
 
@@ -191,13 +191,13 @@ class SectionCard {
       if (res.status === 404) {
         // The server restarted and forgot the job.
         this.job = null;
-        this.setStatus("error", "Stato dell'operazione perso (server riavviato?)");
+        this.setStatus("error", "Operation status lost (server restarted?)");
         this.refreshButtons();
         return;
       }
-      this.setStatus("error", `${errorMessage(res)}: riprovo…`, true);
+      this.setStatus("error", `${errorMessage(res)}: retrying…`, true);
     } catch {
-      this.setStatus("error", "Connessione persa: riprovo…", true);
+      this.setStatus("error", "Connection lost: retrying…", true);
     }
     this.pollTimer = setTimeout(() => this.poll(), POLL_MS);
   }
@@ -265,7 +265,7 @@ class RunDialog {
   }
 }
 
-// "Strata è acceso": shown instead of the Run dialog. OK closes it and points
+// "Strata is on": shown instead of the Run dialog. OK closes it and points
 // at the card to stop.
 class NoticeDialog {
   constructor() {
@@ -279,19 +279,19 @@ class NoticeDialog {
   }
 
   show(card, conflicts) {
-    const labels = conflicts.map((c) => c.label).join(" e ");
+    const labels = conflicts.map((c) => c.label).join(" and ");
     const many = conflicts.length > 1;
     if (conflicts.every((c) => c.reason === "on")) {
-      this.titleEl.textContent = `${labels} ${many ? "sono accesi" : "è acceso"}`;
+      this.titleEl.textContent = `${labels} ${many ? "are on" : "is on"}`;
       this.textEl.textContent =
-        `${card.section.label} e ${labels} non possono essere accesi insieme. ` +
-        `Spegni prima ${labels} con il pulsante Stop ${many ? "delle loro card" : "della sua card"}, ` +
-        `poi riprova Run.`;
+        `${card.section.label} and ${labels} cannot be on at the same time. ` +
+        `Stop ${labels} first with the Stop button on ${many ? "their cards" : "its card"}, ` +
+        `then click Run again.`;
     } else {
-      this.titleEl.textContent = `Operazione in corso su ${labels}`;
+      this.titleEl.textContent = `Operation in progress on ${labels}`;
       this.textEl.textContent =
-        `Attendi che finisca. Se poi ${labels} ${many ? "restano accesi" : "resta acceso"}, ` +
-        `${many ? "spegnili" : "spegnilo"} con Stop prima di avviare ${card.section.label}.`;
+        `Wait for it to finish. If ${labels} ${many ? "are" : "is"} still on afterwards, ` +
+        `stop ${many ? "them" : "it"} with Stop before starting ${card.section.label}.`;
     }
     this.target = this.cards.find((c) => c.tab.id === card.tab.id && c.section.id === conflicts[0].id) || null;
     this.el.showModal();
@@ -335,7 +335,7 @@ function buildTabs(config, dialogs) {
     if (tab.sections.length === 0) {
       const empty = document.createElement("p");
       empty.className = "panel-empty muted";
-      empty.textContent = `Nessuna sezione configurata per ${tab.label} (${tab.host.address}).`;
+      empty.textContent = `No sections configured for ${tab.label} (${tab.host.address}).`;
       panel.append(empty);
     }
     for (const section of tab.sections) {
@@ -383,7 +383,7 @@ async function main() {
   }
   if (!res.ok) {
     document.getElementById("loading").textContent =
-      `Impossibile caricare la configurazione (${res.status ? errorMessage(res) : "server non raggiungibile"}).`;
+      `Cannot load the configuration (${res.status ? errorMessage(res) : "server unreachable"}).`;
     return;
   }
   const config = res.data;

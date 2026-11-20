@@ -13,13 +13,17 @@
 
 [Unit]
 Description=llm-console in a podman container
+# Also on the home LAN: the socat forwarder starts with the web app (and stops
+# with it: it is BindsTo=llm-console.service).
+Wants=llm-console-lan.service
 
 [Container]
 Image=localhost/llm-console:latest
 ContainerName=llm-console
 # Same UID inside and outside, otherwise the user cannot read the mounted key.
 UserNS=keep-id
-# Only on loopback: Tailscale serve (https://ai.exocomet-boga.ts.net) forwards to it.
+# Only on loopback: Tailscale serve (https://ai.exocomet-boga.ts.net) and, for the
+# home LAN, llm-console-lan.service (socat, lan.env) forward to it.
 PublishPort=127.0.0.1:80:8080
 # Key for the remote hosts, read-only: entrypoint.sh copies it into ~/.ssh.
 Volume=%h/.ssh/id_ecdsa:/run/host-ssh/nodes/id_ecdsa:ro

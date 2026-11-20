@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,13 +11,13 @@
 <body>
   <header class="topbar">
     <h1>llm-console</h1>
-    <span class="badge" id="dry-run-badge" hidden title="Modalità di prova: nessun comando viene eseguito">dry-run</span>
+    <span class="badge" id="dry-run-badge" hidden title="Test mode: no command is run">dry-run</span>
   </header>
 
   <nav class="tabs" id="tabs" role="tablist" aria-label="Host"></nav>
 
   <main id="panels">
-    <p class="muted" id="loading">Caricamento…</p>
+    <p class="muted" id="loading">Loading…</p>
   </main>
 
   <footer class="footer muted" id="footer"></footer>
@@ -27,12 +27,12 @@
       <h2 id="run-title">Run</h2>
       <p class="muted" id="run-host"></p>
       <fieldset>
-        <legend>Quantizzazione</legend>
+        <legend>Quantization</legend>
         <div class="radios" id="run-radios"></div>
       </fieldset>
       <div class="dialog-actions">
-        <button type="button" class="btn btn-ghost" id="run-cancel">Annulla</button>
-        <button type="submit" class="btn btn-run" id="run-confirm" disabled>Avvia</button>
+        <button type="button" class="btn btn-ghost" id="run-cancel">Cancel</button>
+        <button type="submit" class="btn btn-run" id="run-confirm" disabled>Start</button>
       </div>
     </form>
   </dialog>
@@ -53,7 +53,7 @@
         <h2 class="card-title"></h2>
         <span class="card-host muted"></span>
       </header>
-      <p class="card-note muted" hidden>Da configurare: nessun comando definito per questa sezione.</p>
+      <p class="card-note muted" hidden>Not configured: no commands are defined for this section.</p>
       <div class="card-actions">
         <button type="button" class="btn btn-run" data-action="run">Run</button>
         <button type="button" class="btn btn-stop" data-action="stop">Stop</button>

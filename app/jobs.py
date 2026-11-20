@@ -47,9 +47,9 @@ def port_free_command(ready: Ready) -> str:
     sport = shlex.quote(f"sport = :{ready.port}")
     return (
         f"busy=$(ss -ltnpH {sport}); "
-        f'if [ -n "$busy" ]; then echo "La porta {ready.port} è già in uso:" >&2; '
+        f'if [ -n "$busy" ]; then echo "Port {ready.port} is already in use:" >&2; '
         f'echo "$busy" >&2; exit 1; fi; '
-        f'echo "Porta {ready.port} libera."'
+        f'echo "Port {ready.port} is free."'
     )
 
 
@@ -62,10 +62,10 @@ def wait_ready_command(ready: Ready) -> str:
     return (
         "while :; do "
         f"if ! pgrep -x {proc} >/dev/null; then "
-        f'echo "{ready.process} non è più in esecuzione: vedi il suo log." >&2; exit 1; fi; '
+        f'echo "{ready.process} is no longer running: see its log." >&2; exit 1; fi; '
         f"if ss -ltnpH {sport} | grep -qF {owner} "
         f"&& curl -fs -o /dev/null --max-time 5 {url}; then "
-        f"echo Pronto: {url}; exit 0; fi; "
+        f"echo Ready: {url}; exit 0; fi; "
         "sleep 2; done"
     )
 
@@ -77,11 +77,11 @@ def run_steps(section: Section, variant: str) -> list[Step]:
     ready = section.ready
     if ready:
         steps.append(Step(port_free_command(ready), 30,
-                          label=f"controllo che la porta {ready.port} sia libera"))
+                          label=f"checking that port {ready.port} is free"))
     steps.append(Step(section.variants[variant].command, section.run_timeout))
     if ready:
         steps.append(Step(wait_ready_command(ready), ready.timeout,
-                          label=f"attendo che {ready.process} risponda su {ready.url}"))
+                          label=f"waiting for {ready.process} to answer on {ready.url}"))
     return steps
 
 
@@ -246,19 +246,19 @@ class JobManager:
                 log.info("job %s: ssh %s@%s %s", job.id, host.user, host.address, step.command)
                 exit_code = await self.runner.run(argv, step.timeout, job.output.append)
                 if exit_code is None:
-                    job.output.append(f"[timeout dopo {step.timeout:g} s: comando interrotto]")
+                    job.output.append(f"[timed out after {step.timeout:g} s: command killed]")
                     job.finish(JobState.TIMEOUT, None)
                     break
                 if exit_code != 0:
                     if step.check:
                         job.finish(JobState.FAILED, exit_code)
                         break
-                    job.output.append(f"[exit {exit_code}, ignorato]")
+                    job.output.append(f"[exit {exit_code}, ignored]")
             else:
                 job.finish(JobState.SUCCEEDED, exit_code)
         except Exception as exc:  # e.g. the ssh binary is missing
             log.exception("job %s failed", job.id)
-            job.output.append(f"[errore: {exc}]")
+            job.output.append(f"[error: {exc}]")
             job.finish(JobState.FAILED, None)
         log.info("job %s: %s (exit %s)", job.id, job.state.value, job.exit_code)
 

@@ -1,7 +1,7 @@
 [project]
 name = "llm-console"
 version = "0.1.0"
-description = "Web app che avvia e ferma le inference engine sugli host remoti via ssh"
+description = "Web app that starts and stops the inference engines on remote hosts over ssh"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
