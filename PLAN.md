@@ -391,7 +391,7 @@ da spegnere si evidenzia e il focus va sul suo Stop. Nessuno stop automatico.
     `strata launch --status` stampa una riga `<nome>: <stato> at <url>` per ogni lancio in stato
     `starting` o `ready`, quindi copre anche il caricamento; con nulla acceso stampa "Nothing from
     `strata launch` is running.". Se `strata` stesso fallisce → exit 2, Run rifiutato.
-    - *Prima versione (`83a75db`) con `--output json | jq`, sbagliata*: con un lancio attivo Strata
+    - *Prima versione (`7d28890`) con `--output json | jq`, sbagliata*: con un lancio attivo Strata
       stampa quella riga anche **dopo** il JSON, jq fallisce (exit 5) e il Run di llama-server con
       Strata acceso dava "non riesco a verificare" invece del dialog. Successo il 20/11 alle 10:34
       dalla console. Corretta con l'output testuale, come suggerito da te.
@@ -414,10 +414,10 @@ da spegnere si evidenzia e il focus va sul suo Stop. Nessuno stop automatico.
 
 - [x] **L-A — Script sul PC**: tuo (`bbb57db`).
 - [x] **L-B — App**: §11.2, test, dry-run (dialog e sequenza dei passi verificati nel browser).
-- [x] **L-C — Deploy** di `f447c00` con `./deploy.sh` (20/11 09:56). Run 8 bit provato dalla console
+- [x] **L-C — Deploy** di `9ae24d2` con `./deploy.sh` (20/11 09:56). Run 8 bit provato dalla console
       (sotto); gli altri criteri restano da provare.
 - [x] **L-D — Strata e llama-server esclusivi** (§11.3): app, test, dialog verificato nella preview.
-      Deploy di `83a75db` (20/11).
+      Deploy di `7d28890` (20/11).
 
 ### 11.5 Criteri di accettazione
 
@@ -437,7 +437,7 @@ da spegnere si evidenzia e il focus va sul suo Stop. Nessuno stop automatico.
         evidenzia la card Strata;
       - Strata è rimasto `ready`.
 - [x] Run di Strata con llama-server acceso: dialog "llama-server is on" (allora in italiano), nessun job.
-      *20/11, con `83a75db` in produzione:*
+      *20/11, con `7d28890` in produzione:*
       - `GET …/strata/conflicts` → llama-server `on` in 0,2 s;
       - `POST …/strata/run` → `409` e nessun job creato;
       - nella pagina reale (tunnel ssh verso raspy:80) Run di Strata mostra il dialog e OK evidenzia la
@@ -530,7 +530,7 @@ varianti di llama-server sono ora `qwen-q8`, `qwen-q4`, `gemma-q8` e `gemma-q4`.
 - `~/Strata/run-unsloth-ud-q8_k_xl.sh` punta a `models/unsloth-UD-Q8_K_XL`, che non esiste (c'è solo
   `models/Q8_0`). L'etichetta `q8 · Q8_0` presume che lo script venga corretto verso `Q8_0`.
 
-**Versione nel footer.** Dopo il deploy di `ce7e711` il footer diceva ancora `d78085b-dirty`. Con il
+**Versione nel footer.** Dopo il deploy di `cf1162e` il footer diceva ancora `7d743b5-dirty`. Con il
 contenuto identico alla build precedente, podman riusava in cache il layer `ENV` / `LABEL`, anche se
 `--build-arg` era cambiato. Ora `build.sh` scrive `container/VERSION` (ignorato da git),
 l'immagine lo copia in `/app/VERSION` e l'app lo legge.
@@ -538,8 +538,8 @@ l'immagine lo copia in `/app/VERSION` e l'app lo legge.
 - [ ] Deploy, poi Run di ogni voce dalla console: il messaggio passa da "launching" a "ready to serve
       requests". Gemma solo dopo la correzione dei percorsi.
 - [x] Il footer mostra la versione giusta anche quando il codice non cambia.
-      *20/11, deploy di `ad81ee0`*:
-      - il footer e `/app/VERSION` dicono `ad81ee0`;
+      *20/11, deploy di `4704c88`*:
+      - il footer e `/app/VERSION` dicono `4704c88`;
       - una build di prova con lo stesso contenuto e `LLM_CONSOLE_VERSION=vtest-same-content` ha
         prodotto un'immagine con quella versione (immagine poi rimossa, servizio non toccato).
       - In produzione la pagina mostra le descrizioni dei modelli, e `/api/config` le quattro voci di
