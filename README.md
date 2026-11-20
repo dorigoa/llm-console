@@ -133,8 +133,9 @@ Both files are tracked by git. Your edits stay local, and updates keep them; see
   `killall` (psmisc).
 - For Strata: `~/.local/bin/strata`.
 - On the Mac of the example config:
-  - `~/TurboFF/run-turboff.sh`, `~/TurboFF/stop.sh`, `~/MLX/run-mlx.sh` and `~/MLX/stop.sh`. They are
-    kept on the Mac, not in this repository. A run script starts the server in the background, checks
+  - `~/TurboFF/run-turboff.sh`, `~/TurboFF/stop.sh`, `~/MLX/run-mlx.sh` and `~/MLX/stop.sh`, from
+    [dorigoa/TurboFF](https://github.com/dorigoa/TurboFF) and [dorigoa/MLX](https://github.com/dorigoa/MLX),
+    cloned to `~/TurboFF` and `~/MLX`. A run script starts the server in the background, checks
     the port first with `lsof`, and returns once the server answers or as soon as it exits. Each stop
     script waits until its server has exited.
   - `TurboFieldfareServer` in `~/.local/bin`.

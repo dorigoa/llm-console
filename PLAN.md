@@ -576,8 +576,11 @@ l'immagine lo copia in `/app/VERSION` e l'app lo legge.
     il nome è un altro modello della cache, mlx_lm lo carica, e la memoria ne risente.
   - `--max-tokens 32768`, perché il default di mlx_lm è 512. Il campionamento resta quello di mlx_lm
     (temperatura 0) se il client non lo manda.
-- **Script sul Mac** (non nel repo), nello stile di `~/Llama`: `~/TurboFF/run-turboff.sh -model … -ctx …
+- **Script sul Mac**, nello stile di `~/Llama`: `~/TurboFF/run-turboff.sh -model … -ctx …
   -host … -port …`, `~/TurboFF/stop.sh`, `~/MLX/run-mlx.sh -model … -host … -port …`, `~/MLX/stop.sh`.
+  Dal 20/11 sono versionati come `~/Llama` e `~/Strata`, un repo pubblico per cartella:
+  [dorigoa/TurboFF](https://github.com/dorigoa/TurboFF) (`de044f5`) e
+  [dorigoa/MLX](https://github.com/dorigoa/MLX) (`385d60d`), con i log in `.gitignore` e un README.
   - Il run controlla che la porta sia libera (`lsof`), avvia il server con `nohup … &` e il log
     `./turboff-<ts>.log` o `./mlx-<ts>.log`, poi torna:
     - quando `/v1/models` risponde (TurboFieldfare);
