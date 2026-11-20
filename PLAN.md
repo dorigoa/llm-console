@@ -758,8 +758,20 @@ Dettagli:
 
 ### 15.6 Criteri di accettazione (dopo il deploy)
 
-- [ ] Su raspy le quattro card mostrano la riga live, e "Off" per gli engine spenti.
-- [ ] Una richiesta a ciascun engine acceso mostra prefill e generazione con i tok/s, poi Idle; per
-      llama-server e Strata con MTP, anche l'acceptance.
-- [ ] Il footer dice la nuova versione, e il container raggiunge via HTTP sia il PC (8000) sia il Mac
-      (8080).
+Commit `21e5e01` (llm-console) ed `e7880de` (fork, i gauge `running_*`), entrambi pushati. Deploy il
+20/11 alle 15:54 con `git pull --autostash && container/install.sh` su raspy. Prima nessuna sezione
+aveva un job in corso. Il log dice `live metrics for 4 sections`.
+
+- [x] Su raspy le quattro card mostrano la riga live, e "Off" per gli engine spenti.
+      *20/11*: `/api/metrics` → le quattro sezioni `off` ("cannot connect"); nella pagina vera
+      (tunnel ssh) quattro righe "Off" con il motivo nel tooltip.
+- [x] Una richiesta a ciascun engine acceso mostra prefill e generazione con i tok/s, poi Idle; per
+      llama-server con MTP, anche l'acceptance. *20/11, `/api/metrics` di raspy*:
+      - TurboFieldfare (Gemma 4 bit, 64k, avviato dalla console): prefill 235 → 179 tok/s con
+        "512 → 11.264 / 11.684", poi generazione a 35 tok/s, poi idle; mlx_lm intanto `off`;
+      - llama-server (Qwen 8 bit con MTP, avviato dalla console): prefill a circa 1000–1365 tok/s,
+        generazione a 21–25 tok/s, poi idle con acceptance 27,3%; Strata intanto `off`;
+      - Strata provato solo in locale (§15.5), non dopo il deploy.
+- [x] Il footer dice la nuova versione (`v0.0.1-preprod-nomac-4-g21e5e01`), e il container raggiunge via
+      HTTP sia il PC (8000) sia il Mac (8080).
+- Alla fine tutti gli engine sono spenti, e il preview locale è fermo.
