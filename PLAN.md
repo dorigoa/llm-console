@@ -485,3 +485,54 @@ Anche i commenti nel codice sono in inglese. README e PLAN restano in italiano.
       - Corretto con `SuccessExitStatus=143`: ora finisce `inactive`.
 - [ ] Al prossimo reboot di raspy: il forwarder riparte da solo, anche se il Wi-Fi arriva dopo la web app.
 
+## 13. Modelli nella pagina, Gemma, messaggi di stato (20/11/2026)
+
+**Messaggi di stato.** Al posto di "Run iq4 running…" la card dice cosa succede e con quale modello:
+
+| | Run | Stop |
+|---|---|---|
+| in corso | "Strata is launching Qwen3.8-Flash-Next UD-IQ4_XS…" | "Stopping Strata…" |
+| riuscito | "Qwen3.8-Flash-Next UD-IQ4_XS is ready to serve requests" | "Strata stopped" |
+| fallito | "Strata could not launch … (exit N)" | "Stopping Strata failed (exit N)" |
+| timeout | "Launching … timed out" | "Stopping Strata timed out" |
+
+"Ready to serve requests" significa che `/v1/models` ha risposto:
+- **llama-server**: il controllo `ready` ora usa `/v1/models` al posto di `/health`;
+- **Strata**: nuovo `ready` senza `process`. `strata launch --no-tui` aspetta già il modello, quindi
+  questo passo conferma solo che l'API risponde (timeout 120 s). Non c'è controllo della porta prima
+  del Run, perché lo gestisce Strata.
+
+**Modelli.** Nuovi campi di config:
+- `description`: una riga sotto il titolo della card e nel dialog;
+- `variants_legend`: la legenda dei radio;
+- `model` per ogni variante.
+
+| Sezione | Descrizione | Varianti (radio) |
+|---|---|---|
+| Strata | "Model: Qwen3.8-Flash-Next" | `iq4 · UD-IQ4_XS`, `q4 · UD-Q4_K_XL`, `q5 · UD-Q5_K_XL`, `q6 · UD-Q6_K_XL`, `q8 · Q8_0` |
+| llama-server | "Models: Qwen3.8-27B, Gemma-4-31B-it" (legenda "Model") | Qwen3.8-27B 8 bit (default) / 4 bit; Gemma-4-31B-it 8 bit (UD-Q8_K_XL) / 4 bit (QAT UD-Q4_K_XL) |
+
+Gemma usa `~/Llama/run-Gemma-4-31b.sh -port 8000 -host 192.168.1.200 [-qat4bit]`. Gli id delle
+varianti di llama-server sono ora `qwen-q8`, `qwen-q4`, `gemma-q8` e `gemma-q4`.
+
+**Script sul PC: problemi trovati (20/11, sola lettura, non modificati)**
+- `~/Llama/run-Gemma-4-31b.sh` (`239186b`):
+  - **percorsi sbagliati**: le righe 62, 80, 132 e 196 usano `/nvme/gguf/gemma-4-31b/…`, ma la
+    cartella è `/nvme/gguf/gemma-4-31B` (ext4 distingue maiuscole e minuscole), quindi llama-server
+    non trova il modello e il Run fallisce;
+  - `#!/bin/bash` è alla riga 18 invece che alla 1. Funziona lo stesso perché viene lanciato da bash,
+    ma è fragile.
+- `~/Strata/run-unsloth-ud-q6_k_xl.sh` punta a `models/unsloth-UD-Q6_K_XL`, che non esiste (c'è
+  `models/UD-Q6_K_XL`).
+- `~/Strata/run-unsloth-ud-q8_k_xl.sh` punta a `models/unsloth-UD-Q8_K_XL`, che non esiste (c'è solo
+  `models/Q8_0`). L'etichetta `q8 · Q8_0` presume che lo script venga corretto verso `Q8_0`.
+
+**Versione nel footer.** Dopo il deploy di `ce7e711` il footer diceva ancora `d78085b-dirty`. Con il
+contenuto identico alla build precedente, podman riusava in cache il layer `ENV` / `LABEL`, anche se
+`--build-arg` era cambiato. Ora `build.sh` scrive `container/VERSION` (ignorato da git),
+l'immagine lo copia in `/app/VERSION` e l'app lo legge.
+
+- [ ] Deploy, poi Run di ogni voce dalla console: il messaggio passa da "launching" a "ready to serve
+      requests". Gemma solo dopo la correzione dei percorsi.
+- [ ] Il footer mostra la versione giusta anche quando il codice non cambia.
+

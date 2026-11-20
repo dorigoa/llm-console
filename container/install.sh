@@ -79,7 +79,7 @@ fi
 up() { curl -fs -o /dev/null --max-time 5 "http://$1/healthz"; }
 for _ in {1..20}; do
     if up "$addr:$port"; then
-        version=$(podman exec "${service%.service}" printenv LLM_CONSOLE_VERSION 2>/dev/null || true)
+        version=$(podman exec "${service%.service}" cat /app/VERSION 2>/dev/null || true)
         echo "llm-console $version is up: http://$addr:$port"
         for _ in {1..10}; do
             if up "$LAN_ADDRESS:$LAN_PORT"; then

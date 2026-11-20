@@ -15,14 +15,21 @@ disabilitati.
 
 Campi opzionali di una sezione:
 
-- **Variante come `{command, label}`**: oltre alla forma stringa. `label` è il testo del radio button.
+- **Variante come `{command, label, model}`**: oltre alla forma stringa.
+  - `label` è il testo del radio button.
+  - `model` è il nome del modello usato nella riga di stato ("Strata is launching *model*…", poi
+    "*model* is ready to serve requests").
+- **`description`**: una riga sotto il titolo della card e nel dialog di Run, per esempio i modelli serviti.
+- **`variants_legend`**: la legenda dei radio button; il default è "Quantization".
 - **`default_variant`**: il radio preselezionato.
 - **`stop_before_run`**: il Run esegue prima lo `stop`.
-- **`ready: {url, process, timeout}`**: per uno script che avvia il server in background ed esce
-  subito, come `run-qwen3.8-27b.sh`.
-  - Prima del Run controlla che la porta dell'`url` sia libera.
-  - Dopo il Run aspetta che `process` ascolti su quella porta e che `url` risponda.
-  - Se `process` muore, il Run fallisce subito.
+- **`ready: {url, process, timeout}`**: il Run è completato solo quando `url` risponde (es.
+  `/v1/models`).
+  - `process` (facoltativo) serve per uno script che avvia il server in background ed esce subito,
+    come `run-qwen3.8-27b.sh`.
+  - Con `process`, prima del Run controlla che la porta dell'`url` sia libera.
+  - Con `process`, dopo il Run aspetta anche che `process` ascolti su quella porta, e se muore il
+    Run fallisce subito.
 - **`running`**: comando remoto che dice se l'engine è acceso (exit 0 = acceso, 1 = spento, altro =
   non verificabile).
 - **`exclusive_with: [id, …]`**: le sezioni della stessa tab che non possono essere accese insieme a

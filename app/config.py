@@ -49,19 +49,23 @@ class Variant(_Model):
     command: str
     # Text of the radio button; None = the variant id.
     label: str | None = None
+    # The model this variant serves, for the status line ("Strata is launching
+    # <model>…", "<model> is ready to serve requests"); None = the label.
+    model: str | None = None
 
 
 class Ready(_Model):
-    """For a Run command that starts the server in the background and returns at once.
+    """When a Run is done: after the command, wait until `url` answers 2xx.
 
-    Before the command: the port of `url` must be free (after the stop, if any).
-    After it: wait until `process` is running, listens on that port and `url`
-    answers 2xx; the Run fails as soon as `process` is no longer running.
+    With `process`, for a command that starts the server in the background and
+    returns at once: before the command the port of `url` must be free (after the
+    stop, if any); after it `process` must also be running and listening on that
+    port, and the Run fails as soon as it is no longer running.
     """
 
     url: str
     # Process name, as pgrep -x and ss -p show it (at most 15 characters).
-    process: Annotated[str, Field(pattern=r"^[A-Za-z0-9._-]{1,15}$")]
+    process: Annotated[str, Field(pattern=r"^[A-Za-z0-9._-]{1,15}$")] | None = None
     timeout: float = Field(default=600, gt=0)
 
     @field_validator("url")
@@ -81,6 +85,10 @@ class Ready(_Model):
 class Section(_Model):
     id: Ident
     label: str
+    # One line under the card title and in the Run dialog (e.g. the models it serves).
+    description: str | None = None
+    # Legend over the radio buttons of the Run dialog.
+    variants_legend: str = "Quantization"
     # Variant id -> remote command (or {command, label}), in the order of the
     # dialog's radio buttons.
     variants: dict[Ident, Variant] = Field(default_factory=dict)

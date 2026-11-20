@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from app.main import CSRF_HEADER, create_app
-from conftest import wait_done
+from conftest import REPO_CONFIG, wait_done
 
 pytestmark = pytest.mark.anyio
 
@@ -46,11 +46,18 @@ async def test_config_view(client):
     assert linux["label"] == "Linux"
     assert linux["host"]["address"] == "192.168.1.200"
     llama, strata = linux["sections"]
-    assert [v["id"] for v in llama["variants"]] == ["q8", "q4"]
-    assert llama["variants"][0]["label"].startswith("8 bit · Qwen3.8-27B")
-    assert llama["default_variant"] == "q8"
+    assert [v["id"] for v in llama["variants"]] == ["qwen-q8", "qwen-q4", "gemma-q8", "gemma-q4"]
+    assert llama["variants"][0] == {"id": "qwen-q8", "label": "Qwen3.8-27B · 8 bit (UD-Q8_K_XL)",
+                                    "model": "Qwen3.8-27B UD-Q8_K_XL"}
+    assert llama["default_variant"] == "qwen-q8"
+    assert llama["description"] == "Models: Qwen3.8-27B, Gemma-4-31B-it"
+    assert llama["variants_legend"] == "Model"
     assert llama["can_run"] and llama["can_stop"]
-    assert strata["variants"] == [{"id": v, "label": v} for v in ["iq4", "q4", "q5", "q6", "q8"]]
+    assert [v["id"] for v in strata["variants"]] == ["iq4", "q4", "q5", "q6", "q8"]
+    assert strata["variants"][1] == {"id": "q4", "label": "q4 · UD-Q4_K_XL",
+                                     "model": "Qwen3.8-Flash-Next UD-Q4_K_XL"}
+    assert strata["description"] == "Model: Qwen3.8-Flash-Next"
+    assert strata["variants_legend"] == "Quantization"
     assert strata["default_variant"] is None
     assert strata["can_run"] and strata["can_stop"]
     assert mac["label"] == "Mac"
@@ -72,12 +79,15 @@ async def test_run_stops_then_runs_the_variant_script(client, fake_runner, varia
     assert job["action"] == "run" and job["variant"] == variant
     assert job["host"] == "alvise@192.168.1.200"
     commands = fake_runner.remote_commands
-    assert len(commands) == 2
+    assert len(commands) == 3
     assert commands[0].endswith("; ~/Strata/stop.sh")
     assert commands[1].endswith(f"; {SCRIPTS[variant]}")
+    assert "curl -fs -o /dev/null --max-time 5 http://192.168.1.200:8000/v1/models" in commands[2]
+    assert "pgrep" not in commands[2]  # no process to watch: strata launch waits by itself
     assert all(argv[-2] == "alvise@192.168.1.200" for argv, _ in fake_runner.calls)
-    assert [timeout for _, timeout in fake_runner.calls] == [120, 900]
+    assert [timeout for _, timeout in fake_runner.calls] == [120, 900, 120]
     assert f"$ {SCRIPTS[variant]}" in job["output_tail"]
+    assert "[waiting for http://192.168.1.200:8000/v1/models to answer]" in job["output_tail"]
 
 
 async def test_stop_runs_stop_script(client, fake_runner):
@@ -103,7 +113,7 @@ async def test_second_request_while_running_is_409(client, fake_runner):
 
     fake_runner.gate.set()
     assert (await wait_done(client, job_id))["state"] == "succeeded"
-    assert len(fake_runner.calls) == 2  # stop + q4 only: the refused requests ran nothing
+    assert len(fake_runner.calls) == 3  # stop, q4, ready: the refused requests ran nothing
     assert (await client.post(f"{STRATA}/stop")).status_code == 202
 
 
@@ -159,7 +169,7 @@ async def test_stop_failure_before_run_is_ignored(client, fake_runner):
     r = await client.post(f"{STRATA}/run", json={"variant": "q4"})
     job = await wait_done(client, r.json()["job_id"])
     assert job["state"] == "succeeded"
-    assert len(fake_runner.calls) == 2
+    assert len(fake_runner.calls) == 3
     assert "[exit 1, ignored]" in job["output_tail"]
 
 
@@ -204,26 +214,31 @@ async def test_unknown_job_is_404(client):
     assert (await client.get("/api/jobs/doesnotexist")).status_code == 404
 
 
-@pytest.mark.parametrize(("variant", "suffix"), [("q8", "-host 192.168.1.200"), ("q4", "-host 192.168.1.200 -4bit")])
-async def test_llama_run_checks_port_runs_then_waits_ready(client, fake_runner, variant, suffix):
+@pytest.mark.parametrize(("variant", "script"), [
+    ("qwen-q8", "./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200"),
+    ("qwen-q4", "./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -4bit"),
+    ("gemma-q8", "./run-Gemma-4-31b.sh -port 8000 -host 192.168.1.200"),
+    ("gemma-q4", "./run-Gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit"),
+])
+async def test_llama_run_checks_port_runs_then_waits_ready(client, fake_runner, variant, script):
     r = await client.post(f"{LLAMA}/run", json={"variant": variant})
     job = await wait_done(client, r.json()["job_id"])
     assert job["state"] == "succeeded"
     stop, port_free, run, ready = fake_runner.remote_commands
     assert stop.endswith("; killall -q -w llama-server || true")
     assert "ss -ltnpH 'sport = :8000'" in port_free
-    assert run.endswith(f"; cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 {suffix}")
-    assert "pgrep -x llama-server" in ready and "http://192.168.1.200:8000/health" in ready
+    assert run.endswith(f"; cd ~/Llama && {script}")
+    assert "pgrep -x llama-server" in ready and "http://192.168.1.200:8000/v1/models" in ready
     assert [timeout for _, timeout in fake_runner.calls] == [60, 30, 60, 600]
     out = job["output_tail"]
     assert "[checking that port 8000 is free]" in out
-    assert "[waiting for llama-server to answer on http://192.168.1.200:8000/health]" in out
+    assert "[waiting for http://192.168.1.200:8000/v1/models to answer]" in out
     assert "$ while" not in out and "$ busy=" not in out  # generated scripts: shown by label
 
 
 async def test_llama_busy_port_stops_the_run(client, fake_runner):
     fake_runner.exit_codes["ss -ltnpH 'sport = :8000'); if"] = 1
-    r = await client.post(f"{LLAMA}/run", json={"variant": "q8"})
+    r = await client.post(f"{LLAMA}/run", json={"variant": "qwen-q8"})
     job = await wait_done(client, r.json()["job_id"])
     assert job["state"] == "failed"
     assert len(fake_runner.calls) == 2  # stop + port check: run-qwen3.8-27b.sh never ran
@@ -231,7 +246,7 @@ async def test_llama_busy_port_stops_the_run(client, fake_runner):
 
 async def test_llama_dying_server_fails_the_run(client, fake_runner):
     fake_runner.exit_codes["pgrep -x llama-server"] = 1
-    r = await client.post(f"{LLAMA}/run", json={"variant": "q4"})
+    r = await client.post(f"{LLAMA}/run", json={"variant": "qwen-q4"})
     job = await wait_done(client, r.json()["job_id"])
     assert job["state"] == "failed" and job["exit_code"] == 1
     assert len(fake_runner.calls) == 4
@@ -242,7 +257,7 @@ LLAMA_ON = "pgrep -x llama-server"
 
 
 @pytest.mark.parametrize(("path", "variant", "on", "other"), [
-    (LLAMA, "q8", STRATA_ON, {"id": "strata", "label": "Strata", "reason": "on"}),
+    (LLAMA, "qwen-q8", STRATA_ON, {"id": "strata", "label": "Strata", "reason": "on"}),
     (STRATA, "q4", LLAMA_ON, {"id": "llama-server", "label": "llama-server", "reason": "on"}),
 ])
 async def test_run_refused_while_the_other_engine_is_on(client, fake_runner, path, variant, on, other):
@@ -261,7 +276,7 @@ async def test_run_refused_while_the_other_engine_is_on(client, fake_runner, pat
 
 
 async def test_run_checks_the_other_engine_first(client, fake_runner):
-    r = await client.post(f"{LLAMA}/run", json={"variant": "q8"})
+    r = await client.post(f"{LLAMA}/run", json={"variant": "qwen-q8"})
     assert r.status_code == 202
     assert len(fake_runner.probes) == 1
     assert fake_runner.probes[0].endswith("; out=$(~/.local/bin/strata launch --status 2>/dev/null) || exit 2; "
@@ -275,7 +290,7 @@ async def test_run_refused_while_the_other_section_has_a_job(client, fake_runner
     assert first.status_code == 202
     probes = len(fake_runner.probes)
 
-    r = await client.post(f"{LLAMA}/run", json={"variant": "q8"})
+    r = await client.post(f"{LLAMA}/run", json={"variant": "qwen-q8"})
     assert r.status_code == 409
     assert r.json()["detail"]["conflicts"] == [{"id": "strata", "label": "Strata", "reason": "busy"}]
     assert len(fake_runner.probes) == probes  # a running job is enough: no ssh check
@@ -287,7 +302,7 @@ async def test_run_refused_while_the_other_section_has_a_job(client, fake_runner
 
 async def test_concurrent_runs_of_exclusive_sections(client, fake_runner):
     fake_runner.gate = asyncio.Event()
-    a, b = await asyncio.gather(client.post(f"{LLAMA}/run", json={"variant": "q8"}),
+    a, b = await asyncio.gather(client.post(f"{LLAMA}/run", json={"variant": "qwen-q8"}),
                                 client.post(f"{STRATA}/run", json={"variant": "q8"}))
     assert sorted([a.status_code, b.status_code]) == [202, 409]
     fake_runner.gate.set()
@@ -296,10 +311,27 @@ async def test_concurrent_runs_of_exclusive_sections(client, fake_runner):
 @pytest.mark.parametrize("code", [255, 5, None])
 async def test_failed_check_refuses_the_run(client, fake_runner, code):
     fake_runner.probe_codes[STRATA_ON] = code
-    r = await client.post(f"{LLAMA}/run", json={"variant": "q8"})
+    r = await client.post(f"{LLAMA}/run", json={"variant": "qwen-q8"})
     assert r.status_code == 502
     detail = r.json()["detail"]
     assert detail["message"].startswith("Cannot tell whether Strata is on")
     assert ("timeout" if code is None else f"exit {code}") in detail["message"]
     assert fake_runner.calls == []
     assert (await client.get(f"{LLAMA}/conflicts")).status_code == 502
+
+
+async def test_version(tmp_path, monkeypatch, fake_runner):
+    import app.main as main
+
+    async def version():
+        app = create_app(REPO_CONFIG, runner=fake_runner)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            return (await c.get("/api/config")).json()["version"]
+
+    monkeypatch.delenv("LLM_CONSOLE_VERSION", raising=False)
+    monkeypatch.setattr(main, "VERSION_FILE", tmp_path / "VERSION")
+    assert await version() == "dev"
+    (tmp_path / "VERSION").write_text("ce7e711\n")
+    assert await version() == "ce7e711"
+    monkeypatch.setenv("LLM_CONSOLE_VERSION", "from-env")
+    assert await version() == "from-env"

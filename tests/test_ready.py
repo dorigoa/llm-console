@@ -97,3 +97,12 @@ def test_strata_running_command(tmp_path, stdout, exit_code, expected):
     result = subprocess.run(["bash", "-c", command], env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == expected, result.stderr
+
+
+def test_ready_without_process_only_waits_for_the_url(run):
+    ready = Ready(url="http://192.168.1.200:8000/v1/models")
+    command = wait_ready_command(ready)
+    assert "pgrep" not in command and "ss " not in command
+    result = run(command, curl=[7, 22, 0], pgrep=[1])  # pgrep would say "dead": not used
+    assert result.returncode == 0, result.stderr
+    assert "Ready: http://192.168.1.200:8000/v1/models" in result.stdout

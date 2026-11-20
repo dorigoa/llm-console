@@ -164,6 +164,11 @@ summary:focus-visible {
 
 .card-host { font-size: 0.85rem; }
 
+.card-desc {
+  margin: -4px 0 0;
+  font-size: 0.92rem;
+}
+
 .card-note {
   margin: 0;
   font-size: 0.9rem;
@@ -273,6 +278,7 @@ dialog h2 {
 }
 
 dialog #run-host { margin: 2px 0 14px; font-size: 0.88rem; }
+dialog #run-desc { margin: -6px 0 14px; font-size: 0.92rem; }
 
 #notice-text { margin: 10px 0 0; line-height: 1.5; }
 

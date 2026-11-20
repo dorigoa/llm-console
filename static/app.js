@@ -7,12 +7,33 @@ const POLL_MS = 2000;
 const POST_HEADERS = { "Content-Type": "application/json", "X-LLM-Console": "1" };
 const TAB_KEY = "llm-console.tab";
 
-const ACTION_TEXT = {
-  running: (label) => `${label} running…`,
-  succeeded: (label) => `${label} done`,
-  failed: (label, job) => `${label} failed` + (job.exit_code != null ? ` (exit ${job.exit_code})` : ""),
-  timeout: (label) => `${label} timed out`,
-};
+// The model a Run of `variantId` serves (the variant id if it is no longer in the config).
+function modelOf(section, variantId) {
+  const variant = section.variants.find((v) => v.id === variantId);
+  return variant ? variant.model : variantId;
+}
+
+// Status line of a job: what the engine is doing, with which model. A Run
+// succeeds only once the model's API answers (the `ready` step on the server).
+function jobText(section, job) {
+  const engine = section.label;
+  const exit = job.exit_code != null ? ` (exit ${job.exit_code})` : "";
+  if (job.action === "run") {
+    const model = modelOf(section, job.variant);
+    return {
+      running: `${engine} is launching ${model}…`,
+      succeeded: `${model} is ready to serve requests`,
+      failed: `${engine} could not launch ${model}${exit}`,
+      timeout: `Launching ${model} timed out`,
+    }[job.state];
+  }
+  return {
+    running: `Stopping ${engine}…`,
+    succeeded: `${engine} stopped`,
+    failed: `Stopping ${engine} failed${exit}`,
+    timeout: `Stopping ${engine} timed out`,
+  }[job.state];
+}
 
 const ICON = { succeeded: "✓", failed: "✗", timeout: "⏱" };
 
@@ -58,6 +79,9 @@ class SectionCard {
     this.el = node;
     node.querySelector(".card-title").textContent = section.label;
     node.querySelector(".card-host").textContent = `${tab.label} · ${tab.host.address}`;
+    const desc = node.querySelector(".card-desc");
+    desc.textContent = section.description || "";
+    desc.hidden = !section.description;
     this.runBtn = node.querySelector('[data-action="run"]');
     this.stopBtn = node.querySelector('[data-action="stop"]');
     this.statusEl = node.querySelector(".card-status");
@@ -139,7 +163,7 @@ class SectionCard {
     const saved = this.saveStatus();
     this.pending = true;
     this.refreshButtons();
-    this.setStatus("running", `${action === "run" ? `Run ${variant}` : "Stop"}: sending…`);
+    this.setStatus("running", jobText(this.section, { action, variant, state: "running" }));
     try {
       const res = await api("POST", `${this.base}/${action}`, action === "run" ? { variant } : undefined);
       if (res.status === 409 && res.data && res.data.detail && res.data.detail.conflicts) {
@@ -165,8 +189,7 @@ class SectionCard {
 
   showJob(job) {
     this.job = job;
-    const label = job.action === "run" ? `Run ${job.variant}` : "Stop";
-    const text = ACTION_TEXT[job.state](label, job);
+    const text = jobText(this.section, job);
     const when = job.state === "running" ? `since ${timeOf(job.started_at)}` : timeOf(job.ended_at);
     this.setStatus(job.state, `${text} · ${when}`);
 
@@ -248,6 +271,10 @@ class RunDialog {
     document.getElementById("run-title").textContent = `Run ${card.section.label}`;
     document.getElementById("run-host").textContent =
       `${card.tab.label} · ${card.tab.host.user}@${card.tab.host.address}`;
+    const desc = document.getElementById("run-desc");
+    desc.textContent = card.section.description || "";
+    desc.hidden = !card.section.description;
+    document.getElementById("run-legend").textContent = card.section.variants_legend;
     const preselected = card.section.default_variant;
     this.radios.replaceChildren(...card.section.variants.map((variant) => {
       const label = document.createElement("label");

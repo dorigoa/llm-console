@@ -39,16 +39,15 @@ COPY app/ /app/app/
 COPY static/ /app/static/
 # Default config; the Quadlet unit mounts ~/llm-console/config.yaml over it.
 COPY config.yaml /app/config.yaml
+# The checkout the image was built from (git describe, "-dirty" with uncommitted
+# changes), written by build.sh: shown in the page footer. A file, not a build
+# arg: podman reuses a cached ENV/LABEL layer even when the build arg changes.
+COPY container/VERSION /app/VERSION
 
 USER ${USER_NAME}
 
-# The checkout the image was built from (git describe, "-dirty" with uncommitted
-# changes): shown in the page footer and in `printenv LLM_CONSOLE_VERSION`.
-ARG LLM_CONSOLE_VERSION=unknown
-LABEL org.opencontainers.image.title="llm-console" \
-      org.opencontainers.image.revision="${LLM_CONSOLE_VERSION}"
-ENV LLM_CONSOLE_VERSION=${LLM_CONSOLE_VERSION} \
-    PYTHONUNBUFFERED=1 \
+LABEL org.opencontainers.image.title="llm-console"
+ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8080

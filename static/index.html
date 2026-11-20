@@ -26,8 +26,9 @@
     <form id="run-form" method="dialog">
       <h2 id="run-title">Run</h2>
       <p class="muted" id="run-host"></p>
+      <p id="run-desc" hidden></p>
       <fieldset>
-        <legend>Quantization</legend>
+        <legend id="run-legend">Quantization</legend>
         <div class="radios" id="run-radios"></div>
       </fieldset>
       <div class="dialog-actions">
@@ -53,6 +54,7 @@
         <h2 class="card-title"></h2>
         <span class="card-host muted"></span>
       </header>
+      <p class="card-desc" hidden></p>
       <p class="card-note muted" hidden>Not configured: no commands are defined for this section.</p>
       <div class="card-actions">
         <button type="button" class="btn btn-run" data-action="run">Run</button>

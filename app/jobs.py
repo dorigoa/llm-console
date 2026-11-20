@@ -54,17 +54,19 @@ def port_free_command(ready: Ready) -> str:
 
 
 def wait_ready_command(ready: Ready) -> str:
-    """Loops until ready.process listens on the port and ready.url answers; exit 1 if it dies."""
+    """Loops until ready.url answers (and ready.process listens on its port; exit 1 if it dies)."""
+    url = shlex.quote(ready.url)
+    answers = f"curl -fs -o /dev/null --max-time 5 {url}"
+    if not ready.process:
+        return f"while :; do if {answers}; then echo Ready: {url}; exit 0; fi; sleep 2; done"
     proc = shlex.quote(ready.process)
     owner = shlex.quote(f'"{ready.process}"')  # how ss -p names the process: users:(("name",…
     sport = shlex.quote(f"sport = :{ready.port}")
-    url = shlex.quote(ready.url)
     return (
         "while :; do "
         f"if ! pgrep -x {proc} >/dev/null; then "
         f'echo "{ready.process} is no longer running: see its log." >&2; exit 1; fi; '
-        f"if ss -ltnpH {sport} | grep -qF {owner} "
-        f"&& curl -fs -o /dev/null --max-time 5 {url}; then "
+        f"if ss -ltnpH {sport} | grep -qF {owner} && {answers}; then "
         f"echo Ready: {url}; exit 0; fi; "
         "sleep 2; done"
     )
@@ -75,13 +77,13 @@ def run_steps(section: Section, variant: str) -> list[Step]:
     if section.stop_before_run and section.stop:
         steps.append(Step(section.stop, section.stop_timeout, check=False))
     ready = section.ready
-    if ready:
+    if ready and ready.process:
         steps.append(Step(port_free_command(ready), 30,
                           label=f"checking that port {ready.port} is free"))
     steps.append(Step(section.variants[variant].command, section.run_timeout))
     if ready:
         steps.append(Step(wait_ready_command(ready), ready.timeout,
-                          label=f"waiting for {ready.process} to answer on {ready.url}"))
+                          label=f"waiting for {ready.url} to answer"))
     return steps
 
 

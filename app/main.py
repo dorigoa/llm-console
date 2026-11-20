@@ -4,6 +4,7 @@ Run with:  uvicorn --factory app.main:create_app --host 0.0.0.0 --port 8080
 Env:       LLM_CONSOLE_CONFIG       config path (default: config.yaml in the checkout)
            LLM_CONSOLE_DRY_RUN=1    run nothing, only report the ssh commands
            LLM_CONSOLE_DRY_RUN_DELAY seconds a dry-run job takes (default 3)
+           LLM_CONSOLE_VERSION      shown in the footer (default: /app/VERSION in the image, else "dev")
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ from .jobs import CheckFailed, Conflicting, JobManager, SectionBusy, stop_steps
 from .runner import DryRunRunner, Runner, SubprocessRunner
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+# Written by container/build.sh into the image (/app/VERSION); absent in a checkout.
+VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
 
 # POSTs must carry this header. A page on another site cannot add it without a
 # CORS preflight, which this app never approves: no cross-site Run/Stop.
@@ -37,6 +40,16 @@ class RunRequest(BaseModel):
 
 def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() not in ("", "0", "false", "no")
+
+
+def _version() -> str:
+    """LLM_CONSOLE_VERSION if set, else the VERSION file of the image, else "dev"."""
+    if version := os.environ.get("LLM_CONSOLE_VERSION"):
+        return version
+    try:
+        return VERSION_FILE.read_text(encoding="utf-8").strip() or "dev"
+    except OSError:
+        return "dev"
 
 
 def _setup_logging() -> None:
@@ -60,7 +73,10 @@ def _config_view(config: Config, dry_run: bool) -> dict:
                 {
                     "id": s.id,
                     "label": s.label,
-                    "variants": [{"id": k, "label": v.label or k} for k, v in s.variants.items()],
+                    "description": s.description,
+                    "variants_legend": s.variants_legend,
+                    "variants": [{"id": k, "label": v.label or k, "model": v.model or v.label or k}
+                                 for k, v in s.variants.items()],
                     "default_variant": s.default_variant,
                     "exclusive_with": s.exclusive_with,
                     "can_run": s.can_run,
@@ -72,7 +88,7 @@ def _config_view(config: Config, dry_run: bool) -> dict:
     return {
         "tabs": tabs,
         "dry_run": dry_run,
-        "version": os.environ.get("LLM_CONSOLE_VERSION", "dev"),
+        "version": _version(),
     }
 
 

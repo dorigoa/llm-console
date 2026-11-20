@@ -26,21 +26,33 @@ tabs:
     sections:
       - id: llama-server
         label: llama-server
-        # run-qwen3.8-27b.sh starts llama-server in the background and returns at
-        # once; it writes ./llama-server-<timestamp>.log, hence the cd. `ready` makes
+        description: "Models: Qwen3.8-27B, Gemma-4-31B-it"
+        variants_legend: Model
+        # The run-*.sh scripts start llama-server in the background and return at
+        # once; they write ./llama-server-<timestamp>.log, hence the cd. `ready` makes
         # Run fail at once if port 8000 is taken (Strata uses it too), then wait for
-        # /health. Run = stop (killall) then the chosen variant.
+        # /v1/models. Run = stop (killall) then the chosen variant.
         stop_before_run: true
         run_timeout: 60
         stop_timeout: 60
-        default_variant: q8
+        default_variant: qwen-q8
         variants:           # in the order of the radio buttons
-          q8:
-            label: "8 bit · Qwen3.8-27B UD-Q8_K_XL"   # MTP embedded in the gguf
+          qwen-q8:          # MTP embedded in the gguf
+            label: "Qwen3.8-27B · 8 bit (UD-Q8_K_XL)"
+            model: Qwen3.8-27B UD-Q8_K_XL
             command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200
-          q4:
-            label: "4 bit · Qwen3.8-27B UD-Q4_K_XL"   # + MTP drafter gguf
+          qwen-q4:          # + MTP drafter gguf
+            label: "Qwen3.8-27B · 4 bit (UD-Q4_K_XL)"
+            model: Qwen3.8-27B UD-Q4_K_XL
             command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -4bit
+          gemma-q8:         # + MTP drafter mtp-gemma-4-31B-it-Q8_0
+            label: "Gemma-4-31B-it · 8 bit (UD-Q8_K_XL)"
+            model: Gemma-4-31B-it UD-Q8_K_XL
+            command: cd ~/Llama && ./run-Gemma-4-31b.sh -port 8000 -host 192.168.1.200
+          gemma-q4:         # + MTP drafter mtp-gemma-4-31B-it-Q4_0
+            label: "Gemma-4-31B-it · 4 bit (QAT UD-Q4_K_XL)"
+            model: Gemma-4-31B-it QAT UD-Q4_K_XL
+            command: cd ~/Llama && ./run-Gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit
         # -w: wait until it has exited (GPUs free); nothing running is not an error.
         stop: killall -q -w llama-server || true
         # Strata and llama-server use the same GPUs and port 8000: Run is refused
@@ -48,21 +60,42 @@ tabs:
         running: pgrep -x llama-server >/dev/null
         exclusive_with: [strata]
         ready:
-          url: http://192.168.1.200:8000/health
+          url: http://192.168.1.200:8000/v1/models
           process: llama-server
-          timeout: 600      # seconds: loading the model takes ~25 s when cached
+          timeout: 600      # seconds: loading a model takes ~10-25 s when cached
       - id: strata
         label: Strata
+        description: "Model: Qwen3.8-Flash-Next"
         # Run = stop.sh (exit code ignored) then the chosen script: switching model is one click.
         stop_before_run: true
         run_timeout: 900    # seconds: model loading can take minutes
         stop_timeout: 120
         variants:           # in the order of the radio buttons
-          iq4: ~/Strata/run-unsloth-ud-iq4_xs-v31.sh
-          q4:  ~/Strata/run-unsloth-ud-q4_k_xl.sh
-          q5:  ~/Strata/run-unsloth-ud-q5_k_xl.sh
-          q6:  ~/Strata/run-unsloth-ud-q6_k_xl.sh
-          q8:  ~/Strata/run-unsloth-ud-q8_k_xl.sh
+          iq4:
+            label: "iq4 · UD-IQ4_XS"
+            model: Qwen3.8-Flash-Next UD-IQ4_XS
+            command: ~/Strata/run-unsloth-ud-iq4_xs-v31.sh
+          q4:
+            label: "q4 · UD-Q4_K_XL"
+            model: Qwen3.8-Flash-Next UD-Q4_K_XL
+            command: ~/Strata/run-unsloth-ud-q4_k_xl.sh
+          q5:
+            label: "q5 · UD-Q5_K_XL"
+            model: Qwen3.8-Flash-Next UD-Q5_K_XL
+            command: ~/Strata/run-unsloth-ud-q5_k_xl.sh
+          q6:
+            label: "q6 · UD-Q6_K_XL"
+            model: Qwen3.8-Flash-Next UD-Q6_K_XL
+            command: ~/Strata/run-unsloth-ud-q6_k_xl.sh
+          q8:               # the model on the PC is Q8_0 (models/Q8_0)
+            label: "q8 · Q8_0"
+            model: Qwen3.8-Flash-Next Q8_0
+            command: ~/Strata/run-unsloth-ud-q8_k_xl.sh
+        # strata launch --no-tui returns once the model answers: this only confirms
+        # that the API does.
+        ready:
+          url: http://192.168.1.200:8000/v1/models
+          timeout: 120
         stop: ~/Strata/stop.sh
         # strata launch --status prints "<name>: <state> at <url>" for each launch in
         # state starting or ready ("Nothing from `strata launch` is running." if none).

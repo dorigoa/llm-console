@@ -19,15 +19,21 @@ def test_repo_config_loads():
     strata = linux.section("strata")
     assert list(strata.variants) == ["iq4", "q4", "q5", "q6", "q8"]
     assert strata.variants["iq4"].command == "~/Strata/run-unsloth-ud-iq4_xs-v31.sh"
-    assert strata.variants["iq4"].label is None
-    assert strata.default_variant is None and strata.ready is None
+    assert strata.variants["iq4"].label == "iq4 · UD-IQ4_XS"
+    assert strata.default_variant is None
     assert strata.stop == "~/Strata/stop.sh"
     assert strata.stop_before_run
+    assert strata.variants["q8"].model == "Qwen3.8-Flash-Next Q8_0"
+    assert strata.description == "Model: Qwen3.8-Flash-Next"
+    assert strata.ready.url == "http://192.168.1.200:8000/v1/models" and strata.ready.process is None
     llama = linux.section("llama-server")
-    assert list(llama.variants) == ["q8", "q4"]
-    assert llama.default_variant == "q8"
-    assert llama.variants["q8"].command.endswith("./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200")
-    assert llama.variants["q4"].command.endswith(" -4bit")
+    assert list(llama.variants) == ["qwen-q8", "qwen-q4", "gemma-q8", "gemma-q4"]
+    assert llama.default_variant == "qwen-q8"
+    assert llama.variants["qwen-q8"].command.endswith("./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200")
+    assert llama.variants["qwen-q4"].command.endswith(" -4bit")
+    assert llama.variants["gemma-q8"].command.endswith("./run-Gemma-4-31b.sh -port 8000 -host 192.168.1.200")
+    assert llama.variants["gemma-q4"].command.endswith(" -qat4bit")
+    assert llama.variants["gemma-q4"].model == "Gemma-4-31B-it QAT UD-Q4_K_XL"
     assert llama.stop.startswith("killall ") and llama.stop_before_run
     assert llama.ready.port == 8000 and llama.ready.process == "llama-server"
     assert llama.running == "pgrep -x llama-server >/dev/null"

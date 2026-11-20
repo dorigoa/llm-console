@@ -2,3 +2,5 @@
 __pycache__/
 .pytest_cache/
 .DS_Store
+# Written by container/build.sh, copied into the image.
+container/VERSION
