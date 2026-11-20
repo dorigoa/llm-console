@@ -534,5 +534,11 @@ l'immagine lo copia in `/app/VERSION` e l'app lo legge.
 
 - [ ] Deploy, poi Run di ogni voce dalla console: il messaggio passa da "launching" a "ready to serve
       requests". Gemma solo dopo la correzione dei percorsi.
-- [ ] Il footer mostra la versione giusta anche quando il codice non cambia.
+- [x] Il footer mostra la versione giusta anche quando il codice non cambia.
+      *20/11, deploy di `ad81ee0`*:
+      - il footer e `/app/VERSION` dicono `ad81ee0`;
+      - una build di prova con lo stesso contenuto e `LLM_CONSOLE_VERSION=vtest-same-content` ha
+        prodotto un'immagine con quella versione (immagine poi rimossa, servizio non toccato).
+      - In produzione la pagina mostra le descrizioni dei modelli, e `/api/config` le quattro voci di
+        llama-server e le cinque di Strata.
 
