@@ -388,12 +388,18 @@ Codice (generico, riusabile per Gemma e per il Mac):
 
 - [x] **L-A — Script sul PC**: tuo (`bbb57db`).
 - [x] **L-B — App**: §11.2, test, dry-run (dialog e sequenza dei passi verificati nel browser).
-- [ ] **L-C — Deploy** con `./deploy.sh`, poi i criteri qui sotto dalla tailnet.
+- [x] **L-C — Deploy** di `f447c00` con `./deploy.sh` (20/11 09:56). Run 8 bit provato dalla console
+      (sotto); gli altri criteri restano da provare.
 
 ### 11.5 Criteri di accettazione
 
-- [ ] Run → 8 bit (preselezionato) → Avvia: `succeeded` solo dopo "Pronto"; il server resta acceso
+- [x] Run → 8 bit (preselezionato) → Avvia: `succeeded` solo dopo "Pronto"; il server resta acceso
       dopo il job; `https://ai.exocomet-boga.ts.net:8443/v1/models` risponde dalla tailnet.
+      *20/11 09:57, dall'API della console su raspy:*
+      - job `succeeded` in 11 s (modello caricato in 9,6 s, gguf in cache);
+      - log in `~/Llama/llama-server-20261120-095715.log`;
+      - llama-server ancora attivo dopo il job e in ascolto sulla 8000;
+      - dalla tailnet `/v1/models` risponde e `/v1/chat/completions` genera a ~50 tok/s.
 - [ ] Run → 4 bit mentre gira 8 bit: killall e avvio nello stesso job, poi Q4_K_XL in servizio.
 - [ ] Run di llama-server con Strata acceso: `failed` subito ("porta 8000 già in uso"), Strata intatto
       (con L2: Strata fermato, poi llama-server avviato).
