@@ -412,6 +412,7 @@ da spegnere si evidenzia e il focus va sul suo Stop. Nessuno stop automatico.
 - [x] **L-C — Deploy** di `f447c00` con `./deploy.sh` (20/11 09:56). Run 8 bit provato dalla console
       (sotto); gli altri criteri restano da provare.
 - [x] **L-D — Strata e llama-server esclusivi** (§11.3): app, test, dialog verificato nella preview.
+      Deploy di `83a75db` (20/11).
 
 ### 11.5 Criteri di accettazione
 
@@ -424,6 +425,12 @@ da spegnere si evidenzia e il focus va sul suo Stop. Nessuno stop automatico.
       - dalla tailnet `/v1/models` risponde e `/v1/chat/completions` genera a ~50 tok/s.
 - [ ] Run → 4 bit mentre gira 8 bit: killall e avvio nello stesso job, poi Q4_K_XL in servizio.
 - [ ] Run di llama-server con Strata acceso: dialog "Strata è acceso", nessun job, Strata intatto.
-- [ ] Run di Strata con llama-server acceso: dialog "llama-server è acceso", nessun job.
+- [x] Run di Strata con llama-server acceso: dialog "llama-server è acceso", nessun job.
+      *20/11, con `83a75db` in produzione:*
+      - `GET …/strata/conflicts` → llama-server `on` in 0,2 s;
+      - `POST …/strata/run` → `409` e nessun job creato;
+      - nella pagina reale (tunnel ssh verso raspy:80) Run di Strata mostra il dialog e OK evidenzia la
+        card llama-server;
+      - llama-server è rimasto acceso con lo stesso PID e Strata spento.
 - [ ] Stop: nessun llama-server sul PC; un secondo Stop è comunque `succeeded`.
 - [ ] Un avvio che fallisce (es. GPU occupate) → `failed` appena il processo muore, non dopo 10 minuti.
