@@ -167,6 +167,10 @@ tabs:
         stop_timeout: 60
         default_variant: qwen-q4
         variants:           # from the Hugging Face cache in /Volumes/Home/hf_models
+          gemma-q4:
+            label: "Gemma-4-31B · 4 bit"
+            model: Gemma-4-31B 4 bit (MLX)
+            command: ~/MLX/run-mlx.sh -model mlx-community/Gemma-4-31B-4bit -host 192.168.1.101 -port 8080
           qwen-q4:
             label: "Qwen3.8-27B · 4 bit"
             model: Qwen3.8-27B 4 bit (MLX)
