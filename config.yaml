@@ -159,7 +159,7 @@ tabs:
           url: http://192.168.1.101:8080/v1/models
           timeout: 60
       - id: mlx-lm
-        label: mlx_lm.server
+        label: MLX
         description: "Model: Qwen3.8-27B"
         variants_legend: Model
         stop_before_run: true
