@@ -1020,7 +1020,20 @@ Velocità misurate: ~27 tok/s in generazione, ~195–205 tok/s di prefill.
   metterebbe quello di Qwen. mlx_vlm 0.8 supporta i drafter di Gemma 4 (`gemma4_assistant` → MTP,
   `gemma4_dflash`, `gemma4_dspark`). Su Hugging Face (23/11): `google/gemma-4-31B-it-assistant`
   (0,90 GiB, l'originale di Google), `mlx-community/gemma-4-31B-it-assistant-bf16` (0,90 GiB) e, per
-  la QAT, `mlx-community/gemma-4-31B-it-qat-assistant-4bit` (0,28 GiB). Non scaricati né provati.
+  la QAT, `mlx-community/gemma-4-31B-it-qat-assistant-4bit` (0,28 GiB).
+- **Provato il 23/11** (su tua richiesta): scaricato `mlx-community/gemma-4-31B-it-assistant-bf16` in
+  `/Volumes/Home/hf_models` (snapshot `28e92270`, 926 MiB, `model_type` `gemma4_assistant`, 4 strati).
+  mlx_vlm lo riconosce da solo come MTP ("Drafter ready; speculative decoding enabled"). Stesse
+  richieste a `gemma-4-31B-it-4bit`, con APC e KV a 8 bit:
+
+  | Richiesta | Senza drafter | Con drafter | Draft accettati |
+  |---|---|---|---|
+  | racconto di 250 parole (thinking spento) | 18,7 tok/s | 24,1 tok/s (+29%) | 164 di 390 (42%) |
+  | funzione Python e test (thinking spento) | 19,0 tok/s | 35,7 tok/s (+88%) | 279 di 360 (78%) |
+  | domanda breve con thinking (budget 800) | 18,9 tok/s | 42,2 tok/s (+123%) | 176 di 180 (98%) |
+
+  Le risposte cominciano allo stesso modo con e senza drafter. Memoria di picco 20,4 GB, con il
+  limite GPU a 26000 MB. La variante Gemma in `config.yaml` passa ancora `-draft-model none`.
 
 ### 18.5 Criteri di accettazione (dopo il deploy)
 
