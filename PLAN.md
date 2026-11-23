@@ -1050,3 +1050,11 @@ spenti).
       - turno 2: 30 token calcolati, 5.030 dalla cache, 0,3 s di prefill, 35,9 tok/s, 43 di 56; "f9";
       - `/api/metrics`: `prefill_s` 0,27, `prefill_tok_s` null, generazione 36,4 tok/s, contesto 5.131;
       - Stop `succeeded`; la card torna "Off".
+- [x] Gemma con il suo drafter (commit `facd41e`, deploy il 23/11 alle 22:10, `v0.1.0-10-gfacd41e`;
+      checkout pulito, nessun job in corso, engine spenti). Dalla console di raspy:
+      - Run della variante Gemma `succeeded` in 12 s, con "drafter
+        mlx-community/gemma-4-31B-it-assistant-bf16, prefix cache on" (modello caricato in 9 s);
+      - richiesta di codice dalla tailnet, thinking spento: 400 token a 35,0 tok/s, `draft_kind` mtp,
+        277 di 366 draft accettati;
+      - card: generazione 35,1 tok/s, prefill 0,65 s, contesto 446 / 262.144;
+      - Stop `succeeded` in 2 s; la card torna "Off".
