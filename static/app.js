@@ -55,6 +55,14 @@ function tokens(n) {
   return n.toLocaleString("en-GB");
 }
 
+// A duration: "0.4 s", "37 s", "3 min 26 s".
+function secondsText(s) {
+  if (s < 10) return `${s.toFixed(1)} s`;
+  if (s < 120) return `${Math.round(s)} s`;
+  const whole = Math.round(s);
+  return `${Math.floor(whole / 60)} min ${whole % 60} s`;
+}
+
 function acceptanceText(x) {
   return `MTP acceptance ${Math.round(x * 100)}%`;
 }
@@ -64,6 +72,7 @@ function lastText(last) {
   if (!last) return "";
   const parts = [];
   if (last.prefill_tok_s != null) parts.push(`prefill ${rateText(last.prefill_tok_s)}`);
+  else if (last.prefill_s != null) parts.push(`prefill ${secondsText(last.prefill_s)}`);
   if (last.gen_tok_s != null) parts.push(`generation ${rateText(last.gen_tok_s)}`);
   if (last.context != null) {
     let text = `context ${tokens(last.context)}`;

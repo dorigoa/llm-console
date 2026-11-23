@@ -954,3 +954,76 @@ Le prove sotto sono state fatte dall'API della console su raspy, quindi via ssh 
       *23/11 20:50*, con il limite alzato da te a 26000: Run dalla console di raspy `failed` in 32 s,
       con lo stesso errore; fermato con Stop dalla console. Il modello è grande per un 4 bit da 31B:
       4 bit con gruppi da 64, ma il vocabolario da 262.144 token e il resto non quantizzato pesano.
+
+## 18. Prefix cache (APC) su mlx_vlm, e i drafter (23/11/2026)
+
+**Domanda (tua).** Le opzioni scelte (thinking budget 8192, max tokens 65536, KV a 8 bit) vanno bene
+per usi agentici? Poi: "Sì, prova APC", e "Sì, attivalo".
+
+### 18.1 Cosa ho misurato (Qwen3.8-27B 4 bit + MTP, KV a 8 bit, via ssh sul Mac)
+
+- **Senza APC** (il default di mlx_vlm) ogni richiesta ricalcola tutto il prompt: 22.541 token in 116 s,
+  e il turno dopo, con lo stesso inizio, di nuovo 116 s (`cache_n: 0` nei `timings`). Per un agente,
+  che a ogni turno rimanda tutta la conversazione, è il costo più grosso: più del thinking budget.
+- **Con APC** (`APC_ENABLED=1`, solo in memoria: `APC_DISK_ENABLED=0`), tre turni come li manda un
+  agente (ogni turno rimanda la risposta precedente):
+
+  | Conversazione | Turno 1 | Turni 2 e 3 |
+  |---|---|---|
+  | 22,5k token, thinking spento | 117,5 s di prefill | 0,6 e 0,5 s (22.507 e 22.539 token dalla cache) |
+  | 22,5k token, thinking acceso (budget 300) | 116,8 s | 0,3 e 0,5 s; turni interi in 4,6 e 5,4 s |
+  | 37k token | 205,8 s | 0,4 s |
+  | 8k token, con lo script nuovo | 39,3 s | 0,3 e 0,4 s |
+
+  Risposte corrette (f7, f9, f123); MTP attivo anche sui turni dalla cache (es. 77 di 108 draft).
+  Se un turno cambia le impostazioni che entrano nel prompt (avevo cambiato `enable_thinking`), il
+  prompt cambia e la cache non serve.
+- **Memoria**: l'istantanea di una conversazione è circa 41 KB per token (KV a 8 bit più lo stato fisso
+  degli strati lineari), ~1,5 GB a 37k token. Il pool di default (2.048 blocchi da 16 token) vale
+  ~2,6 GiB: per stima tiene una conversazione fino a ~65k token (non provato). Ne tiene una sola: due
+  agenti che si alternano si scalzano a vicenda.
+- **Disco**: di default APC salva anche su `~/.cache/mlx-vlm` (fino a 20 GB), circa 1,5 GB per turno a
+  37k token. Spento.
+
+### 18.2 Cosa è cambiato
+
+- **`~/MLX/run-mlx.sh`** (dorigoa/MLX `d6d32e1`): APC acceso di default, solo in memoria (`APC_ENABLED=1 APC_DISK_ENABLED=0`
+  nell'ambiente del server); `-no-apc` lo spegne, `-apc-blocks <n>` cambia il pool (blocchi da 16
+  token). La riga "Starting" dice "prefix cache on/off".
+- **Card**: con APC, `prefill_tok_s` di `/metrics` è falso: tutto il prompt diviso per il tempo della
+  sola parte non in cache (37.290 token su 0,4 s = 92.453 tok/s). `/metrics` non dice quanti token
+  vengono dalla cache, e i contatori cumulativi di `server.apc` non si possono attribuire a una
+  richiesta quando un agente manda la successiva entro lo stesso giro di 3 s. Quindi, con
+  `server.apc.enabled`, la riga dell'ultima richiesta mostra il **tempo** di prefill
+  (`LastRequest.prefill_s`, da `prompt_eval_time_s`): "Last request: prefill 0.4 s · generation
+  34.7 tok/s · context 8,217 / 262,144 tokens (3.1%)". Senza APC restano i tok/s.
+- **Gemma**: il tuo commit `eef5f78` ("model changed") ha portato la variante su
+  `mlx-community/gemma-4-31B-it-4bit` (17.559 MiB di pesi, ci sta). Aggiornati il test di config, che
+  aspettava ancora la QAT, e il commento della variante.
+
+### 18.3 Le opzioni per usi agentici (il mio parere, 23/11)
+
+Dal codice di mlx_vlm 0.8: `--max-tokens` e `--thinking-budget` sono solo i default per le richieste
+che non li mandano; superato il budget, mlx_vlm forza `</think>` e il modello risponde (non si ferma).
+Velocità misurate: ~27 tok/s in generazione, ~195–205 tok/s di prefill.
+- thinking budget 8192: alto per un agente (fino a ~5 min di ragionamento per turno); 2048–4096;
+- max tokens 65536: un loop terrebbe il server occupato ~40 min; 32768;
+- KV a 8 bit: giusta (Qwen3.8 ha 16 strati di attenzione piena su 64: ~34 KiB per token a 8 bit contro
+  64 in bf16);
+- APC: acceso (§18.2).
+
+### 18.4 I drafter
+
+- **Qwen**: la variante passa `-draft-model mlx-community/Qwen3.8-27B-MTP-4bit` (anche il default
+  dello script).
+- **Gemma**: `-draft-model none`, perché in cache non c'è un drafter; senza `none` lo script
+  metterebbe quello di Qwen. mlx_vlm 0.8 supporta i drafter di Gemma 4 (`gemma4_assistant` → MTP,
+  `gemma4_dflash`, `gemma4_dspark`). Su Hugging Face (23/11): `google/gemma-4-31B-it-assistant`
+  (0,90 GiB, l'originale di Google), `mlx-community/gemma-4-31B-it-assistant-bf16` (0,90 GiB) e, per
+  la QAT, `mlx-community/gemma-4-31B-it-qat-assistant-4bit` (0,28 GiB). Non scaricati né provati.
+
+### 18.5 Criteri di accettazione (dopo il deploy)
+
+- [ ] Commit e push di llm-console e di `~/MLX`; deploy su raspy.
+- [ ] Dalla console: Run di Qwen; due turni di una conversazione dalla tailnet; la riga dell'ultima
+      richiesta dice "prefill 0.x s".

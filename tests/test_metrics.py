@@ -317,7 +317,7 @@ async def test_turbofieldfare_older_build_is_busy_or_idle(engines, running, stat
         assert (await TurboFieldfareReader(MAC).read(client, now=1.0)).state == state
 
 
-def mlx_vlm_metrics(in_flight=0, latest=None, ready=True, preloading=False, failures=None):
+def mlx_vlm_metrics(in_flight=0, latest=None, ready=True, preloading=False, failures=None, apc=False):
     """mlx_vlm 0.8's /metrics, trimmed (as it answered on the Mac on 23/11)."""
     return {
         "latest": latest,
@@ -329,7 +329,7 @@ def mlx_vlm_metrics(in_flight=0, latest=None, ready=True, preloading=False, fail
                    "configured_context_limit": None, "effective_context_limit": 262144,
                    "continuous_batching_enabled": True, "request_queue_depth": 0,
                    "preload_failures": failures or {}, "preload_in_progress": preloading,
-                   "apc": {"enabled": False}},
+                   "apc": {"enabled": True, "restored_tokens": 22540} if apc else {"enabled": False}},
     }
 
 
@@ -355,6 +355,17 @@ async def test_mlx_vlm(engines):
         assert (await reader.read(client, now=4.0)) == Live("busy", last=last)
         engines.set(f"{MAC}/metrics", mlx_vlm_metrics(latest=MLX_LATEST))
         assert (await reader.read(client, now=5.0)) == Live("idle", last=last)
+
+
+async def test_mlx_vlm_with_prefix_cache(engines):
+    """APC on: prefill_tok_s is the whole prompt over the time of the part not in
+    the cache (as it answered on the Mac on 23/11), so the line gives the time."""
+    cached_turn = {**MLX_LATEST, "prompt_tokens": 37290, "generated_tokens": 3,
+                   "prefill_tok_s": 92452.87, "prompt_eval_time_s": 0.4033, "decode_tok_s": 26.02}
+    async with engines.client() as client:
+        engines.set(f"{MAC}/metrics", mlx_vlm_metrics(latest=cached_turn, apc=True))
+        live = await MlxVlmReader(MAC).read(client, now=1.0)
+    assert live.last == LastRequest(prefill_s=0.4033, gen_tok_s=26.02, context=37293, max_context=262144)
 
 
 async def test_mlx_vlm_unloaded_or_failed(engines):
@@ -465,5 +476,5 @@ async def test_api_metrics_last_request(engines, fake_runner):
         engines.set(f"{PC}/metrics", llama_metrics(20, 15, prompt=(2000, 2.0), predicted=(600, 24.0)))
         await app.state.metrics.poll_once()
         llama = (await c.get("/api/metrics")).json()["sections"]["linux/llama-server"]
-    assert llama["last"] == {"prefill_tok_s": 1000.0, "gen_tok_s": 25.0, "context": 1234,
+    assert llama["last"] == {"prefill_tok_s": 1000.0, "prefill_s": None, "gen_tok_s": 25.0, "context": 1234,
                              "max_context": 262144, "acceptance": 0.8}

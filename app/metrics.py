@@ -51,6 +51,9 @@ class LastRequest:
 
     # Prompt tokens computed (not taken from a cache) per second of prefill.
     prefill_tok_s: float | None = None
+    # Seconds of prefill, when the speed cannot be told (mlx_vlm with a prefix
+    # cache does not say how many prompt tokens it took from it).
+    prefill_s: float | None = None
     # Tokens generated per second of generation.
     gen_tok_s: float | None = None
     # Tokens the request filled in the context (prompt + generated), of the
@@ -354,12 +357,19 @@ class MlxVlmReader(Reader):
 
 def _mlx_vlm_last(latest: Any, server: dict) -> LastRequest | None:
     """The engine's own speeds of the last request: prompt tokens per second of
-    prefill, and generated tokens (thinking included) per second of decode."""
+    prefill, and generated tokens (thinking included) per second of decode.
+
+    With the prefix cache (APC) on, mlx_vlm's prefill_tok_s divides the whole
+    prompt by the time it took to compute only the part not in the cache (e.g.
+    37,290 tokens over 0.4 s: 92,453 tok/s), and nothing in /metrics says how
+    many came from the cache: the line gives the prefill time instead."""
     if not isinstance(latest, dict):
         return None
     prompt, generated = latest.get("prompt_tokens"), latest.get("generated_tokens")
+    apc = (server.get("apc") or {}).get("enabled")
     return LastRequest(
-        prefill_tok_s=latest.get("prefill_tok_s"),
+        prefill_tok_s=None if apc else latest.get("prefill_tok_s"),
+        prefill_s=latest.get("prompt_eval_time_s") if apc else None,
         gen_tok_s=latest.get("decode_tok_s"),
         context=int(prompt) + int(generated or 0) if prompt else None,
         max_context=_int(server.get("effective_context_limit"))).known()
