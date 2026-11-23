@@ -1024,6 +1024,15 @@ Velocità misurate: ~27 tok/s in generazione, ~195–205 tok/s di prefill.
 
 ### 18.5 Criteri di accettazione (dopo il deploy)
 
-- [ ] Commit e push di llm-console e di `~/MLX`; deploy su raspy.
-- [ ] Dalla console: Run di Qwen; due turni di una conversazione dalla tailnet; la riga dell'ultima
-      richiesta dice "prefill 0.x s".
+Commit `a68ef19` (llm-console) e `d6d32e1` (dorigoa/MLX), pushati. Deploy il 23/11 alle 21:40 con
+`git pull --autostash && container/install.sh` su raspy (checkout pulito, nessun job in corso, engine
+spenti).
+
+- [x] Commit e push di llm-console e di `~/MLX`; deploy su raspy. Il footer dice `v0.1.0-7-ga68ef19`.
+- [x] Dalla console: Run di Qwen; due turni di una conversazione dalla tailnet; la riga dell'ultima
+      richiesta dice "prefill 0.x s". *23/11*:
+      - Run `succeeded`, con "prefix cache on" nella riga Starting;
+      - turno 1: 5.031 token di prompt, 24,7 s di prefill, 26,8 tok/s, 69 di 148 draft; "f7";
+      - turno 2: 30 token calcolati, 5.030 dalla cache, 0,3 s di prefill, 35,9 tok/s, 43 di 56; "f9";
+      - `/api/metrics`: `prefill_s` 0,27, `prefill_tok_s` null, generazione 36,4 tok/s, contesto 5.131;
+      - Stop `succeeded`; la card torna "Off".
