@@ -929,13 +929,25 @@ mlx-community/Qwen3.8-27B-MTP-4bit --max-tokens 65536 --kv-bits 8 --enable-think
 
 ### 17.4 Criteri di accettazione (dopo il deploy)
 
-Finché non c'è il deploy, la console su raspy ha la config vecchia. Il suo Run lancia già il nuovo
-script, quindi mlx_vlm con il drafter di default, ma il suo `running` cerca ancora `mlx_lm`. Così la card
-non vede il server acceso, e il controllo di esclusione con TurboFieldfare non scatta; lo script
-rifiuta comunque la porta occupata. Stop funziona.
+Commit `254a9a5` (llm-console, sopra i tuoi due commit del 22/11 su `config.yaml`: label "MLX" e la
+variante Gemma) e `7b70107` + `5c142a6` (dorigoa/MLX), tutti pushati. Deploy il 23/11 alle 20:40 con
+`git pull --autostash && container/install.sh` su raspy. Prima nessuna sezione aveva un job in corso.
+Le prove sotto sono state fatte dall'API della console su raspy, quindi via ssh dal container al Mac.
 
-- [ ] Commit e push di llm-console e di `~/MLX`; deploy su raspy.
-- [ ] Dalla console: Run di mlx_vlm.server (Qwen3.8-27B 4 bit) → "ready to serve requests"; una
-      richiesta dalla tailnet → "Busy", poi "Idle" con la riga dell'ultima richiesta uguale ai `timings`.
-- [ ] Run di TurboFieldfare con mlx_vlm acceso: rifiutato (409), e viceversa.
-- [ ] Il footer dice la nuova versione.
+- [x] Commit e push di llm-console e di `~/MLX`; deploy su raspy.
+- [x] Dalla console: Run di MLX (Qwen3.8-27B 4 bit con MTP) → pronto; una richiesta dalla tailnet →
+      "Busy", poi "Idle" con la riga dell'ultima richiesta uguale ai `timings`. *23/11*:
+      - `conflicts` vuoto, Run `succeeded` in 13 s; subito dopo l'ultima richiesta è quella di prova
+        dello script (contesto 54);
+      - `:9443/v1/models` elenca tutta la cache HF, con `loaded: true` solo su
+        `mlx-community/Qwen3.8-27B-4bit`;
+      - richiesta da `:9443` di 2.605 token di prompt + 400: stati `idle` → `busy` → `idle`; console
+        prefill 204,9 tok/s, generazione 27,5 tok/s, contesto 3.005 / 262.144; `timings` 204,9 e
+        27,4 tok/s, MTP 189 di 419 draft accettati (45%).
+- [x] Run di TurboFieldfare con MLX acceso: `409` "Stop MLX before starting TurboFieldfare", con
+      `conflicts` MLX `on`. Il verso opposto è coperto dai test, non provato dal vivo.
+- [x] Il footer dice la nuova versione (`v0.1.0-3-g254a9a5`); `app.js` servito non ha più lo stato
+      `serving`.
+- Stop dalla console in 2 s; alla fine nessun engine acceso sul Mac.
+- [ ] Gemma-4-31B-it QAT 4 bit: il Run fallirà con "Insufficient Memory" finché `iogpu.wired_limit_mb`
+      non è abbastanza alto per 26,9 GiB di pesi più la KV (a 24000 non basta).
