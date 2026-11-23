@@ -846,3 +846,96 @@ su raspy. Prima nessuna sezione aveva un job in corso. Il log dice `live metrics
 - [x] Il footer dice la nuova versione (`v0.0.1-preprod-nomac-6-g38b4919`).
 - Strata e TurboFieldfare provati solo in locale (§16.3), non dopo il deploy. Alla fine tutti gli
   engine sono spenti.
+
+## 17. mlx_vlm.server al posto di mlx_lm.server (23/11/2026)
+
+**Richiesta (tua).** mlx_lm.server ha due limiti: non ha metriche, quindi non si vedono i tok/s, e non
+supporta lo speculative decoding MTP con Qwen. Con
+`uvx --from mlx-vlm mlx_vlm.server --model mlx-community/Qwen3.8-27B-4bit --draft-model
+mlx-community/Qwen3.8-27B-MTP-4bit --max-tokens 65536 --kv-bits 8 --enable-thinking --thinking-budget
+8192` vedi le metriche e generi circa 2x più veloce. La card della tab Mac deve usare mlx-vlm.
+
+### 17.1 Cosa espone mlx_vlm 0.8.0 (letto nel codice e provato, 23/11)
+
+| Cosa | Comportamento |
+|---|---|
+| Avvio | `--model` carica il modello (e il drafter) in background. `/health` e `/v1/models` rispondono subito; le POST ricevono 503 `model_loading` finché il caricamento non finisce |
+| `/health` | `model_ready`, `preload_in_progress`, `preload_failures` (l'errore se il caricamento fallisce), `effective_context_limit` (262144 per Qwen3.8-27B) |
+| `/metrics` | JSON: `latest` (l'ultima richiesta finita: `prompt_tokens`, `generated_tokens`, `prefill_tok_s`, `decode_tok_s`…), `recent`, `summary` (`in_flight`, totali), `server` (lo stato di `/health`) |
+| Durante una richiesta | Solo `summary.in_flight`: la richiesta viene registrata quando finisce, quindi niente fase, niente token finora, niente tok/s dal vivo |
+| MTP | Solo nei `timings` di ogni risposta: `draft_kind: mtp`, `draft_n_accepted` di `draft_n`. Non in `/metrics` |
+| Client | Deve mandare `model`: senza, risponde 422 (mlx_lm invece lo accettava assente) |
+
+### 17.2 Cosa è cambiato
+
+- **Mac:** `uv tool install mlx-vlm==0.8.0` → `~/.local/bin/mlx_vlm.server`, come per mlx-lm (che resta
+  installato ma non è più usato). Non `uvx`, che a un altro avvio può prendere un'altra versione.
+- **`~/MLX`** ([dorigoa/MLX](https://github.com/dorigoa/MLX), commit `7b70107`, pushato):
+  - `run-mlx.sh` avvia `mlx_vlm.server` con le opzioni della tua riga di comando: `-draft-model`
+    (default `mlx-community/Qwen3.8-27B-MTP-4bit`, oppure `none`), `-max-tokens` 65536, `-kv-bits` 8,
+    thinking acceso (`-no-thinking` lo spegne), `-thinking-budget` 8192;
+  - aspetta `model_ready` su `/health` e fallisce subito se `preload_failures` non è vuoto; poi manda
+    la richiesta di prova di 1 token, perché `model_ready` non basta (vedi le prove);
+  - `stop.sh` ferma `mlx_vlm.server`; il README spiega installazione, download del drafter e opzioni.
+- **llm-console:**
+  - la sezione `mlx-lm` diventa `mlx-vlm`; la label resta "MLX", come l'avevi messa il 22/11. Il
+    comando di Qwen passa `-draft-model mlx-community/Qwen3.8-27B-MTP-4bit`; `running` =
+    `pgrep -f '[/]mlx_vlm[.]server( |$)'` (trova anche un server avviato a mano con `uvx`);
+    `exclusive_with` di TurboFieldfare aggiornato;
+  - la variante Gemma che avevi aggiunto il 22/11 puntava a `mlx-community/Gemma-4-31B-4bit`, che non è
+    nella cache: ora punta a `mlx-community/gemma-4-31B-it-qat-4bit`, che c'è, con `-draft-model none`
+    (non c'è un drafter MLX per Gemma; senza `none` lo script aggiungerebbe quello di Qwen). Pesa
+    26,9 GiB: con `iogpu.wired_limit_mb` a 20000 e poi a 24000 la richiesta di prova va in
+    "Insufficient Memory" (vedi le prove);
+  - `metrics.kind` `mlx-vlm` con `MlxVlmReader`, al posto di `mlx-lm`. Stati: `loading` durante il
+    caricamento, `busy` con richieste in corso, `idle`, `unloaded` dopo un `/unload`, `unknown` con
+    l'errore se il caricamento è fallito. L'ultima richiesta: `prefill_tok_s`, `decode_tok_s`,
+    contesto = prompt + generati su `effective_context_limit`; acceptance MTP assente;
+  - TurboFieldfare e mlx_vlm sulla 8080 si distinguono così: Prometheus con `turbofieldfare_*` contro
+    JSON con `server` e `summary`;
+  - lo stato `serving` (solo mlx_lm) è stato tolto da pagina e CSS.
+- **Sulla card:** "Loading the model…", poi "Busy" durante una richiesta (senza tok/s: mlx_vlm non li
+  dà), poi "Idle" con la riga "Last request: prefill … · generation … · context …". Subito dopo un Run
+  l'ultima richiesta è quella di prova dello script (1 token, ~50 di prompt), finché non arriva la prima
+  vera.
+
+### 17.3 Prove (23/11, via ssh sul Mac come fa raspy, e preview dry-run sul Mac)
+
+- `run-mlx.sh` con modello e drafter: pronto in 14 s (modello in 8 s), `pgrep` vede il processo con
+  tutte le opzioni.
+- Errori:
+  - porta occupata → exit 1, con il processo che la tiene;
+  - drafter non in cache → exit 2 subito;
+  - il drafter passato come modello: `model_ready` diventa true, ma la richiesta di prova fallisce
+    (HTTP 500, `'Qwen3_5MTPDraftModel' object has no attribute 'language_model'`) → exit 1 in 2,6 s
+    con il traceback. Per questo la richiesta di prova resta;
+  - Gemma-4-31B-it QAT 4 bit: si carica in ~10 s, poi la richiesta di prova va in
+    `[METAL] … Insufficient Memory` sia con `iogpu.wired_limit_mb` 20000 sia con 24000 (alzato da te):
+    i soli pesi sono 26,9 GiB. Exit 1 in ~23 s;
+  - stop in 1,7 s; un secondo stop, con niente acceso, dà exit 0.
+- Richieste, confrontate con i `timings` della risposta:
+
+  | Richiesta | Console | `timings` dell'engine |
+  |---|---|---|
+  | 2.605 token di prompt + 400 | prefill 207 tok/s, generazione 26,8 tok/s, contesto 3.005 / 262.144 | 207,3 e 26,75 tok/s; MTP 189 di 419 draft accettati (45%) |
+  | 67 + 300 | prefill 90,8 tok/s, generazione 28,5 tok/s, contesto 367 / 262.144 | 90,8 e 28,4 tok/s; MTP 138 di 321 (43%) |
+
+  La generazione della console è `decode_tok_s` di `/metrics`, calcolato sul tempo tra primo e ultimo
+  token: differisce di qualche decimo da `predicted_per_second` dei `timings`.
+- Preview: la card mostra "Busy" durante la richiesta, poi "Idle" con le due righe; TurboFieldfare
+  intanto è "Off" ("no TurboFieldfare metrics (HTTP 200)").
+- 152 test verdi, compreso il `running` con un `pgrep -f` vero (fatto a server spento).
+- Alla fine nessun engine acceso sul Mac.
+
+### 17.4 Criteri di accettazione (dopo il deploy)
+
+Finché non c'è il deploy, la console su raspy ha la config vecchia. Il suo Run lancia già il nuovo
+script, quindi mlx_vlm con il drafter di default, ma il suo `running` cerca ancora `mlx_lm`. Così la card
+non vede il server acceso, e il controllo di esclusione con TurboFieldfare non scatta; lo script
+rifiuta comunque la porta occupata. Stop funziona.
+
+- [ ] Commit e push di llm-console e di `~/MLX`; deploy su raspy.
+- [ ] Dalla console: Run di mlx_vlm.server (Qwen3.8-27B 4 bit) → "ready to serve requests"; una
+      richiesta dalla tailnet → "Busy", poi "Idle" con la riga dell'ultima richiesta uguale ai `timings`.
+- [ ] Run di TurboFieldfare con mlx_vlm acceso: rifiutato (409), e viceversa.
+- [ ] Il footer dice la nuova versione.

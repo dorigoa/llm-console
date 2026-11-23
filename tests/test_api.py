@@ -11,7 +11,7 @@ pytestmark = pytest.mark.anyio
 STRATA = "/api/sections/linux/strata"
 LLAMA = "/api/sections/linux/llama-server"
 TURBO = "/api/sections/mac/turbofieldfare"
-MLX = "/api/sections/mac/mlx-lm"
+MLX = "/api/sections/mac/mlx-vlm"
 SCRIPTS = {
     "iq4": "~/Strata/run-unsloth-ud-iq4_xs-v31.sh",
     "q4": "~/Strata/run-unsloth-ud-q4_k_xl.sh",
@@ -75,9 +75,10 @@ async def test_config_view(client):
         "choices": [{"id": "256k", "label": "256k"}, {"id": "128k", "label": "128k"},
                     {"id": "64k", "label": "64k"}],
     }]
-    assert mlx["label"] == "mlx_lm.server" and [v["id"] for v in mlx["variants"]] == ["qwen-q4"]
+    assert mlx["label"] == "MLX" and [v["id"] for v in mlx["variants"]] == ["gemma-q4", "qwen-q4"]
+    assert mlx["default_variant"] == "qwen-q4"
     assert mlx["options"] == []
-    assert turbo["exclusive_with"] == ["mlx-lm"] and mlx["exclusive_with"] == ["turbofieldfare"]
+    assert turbo["exclusive_with"] == ["mlx-vlm"] and mlx["exclusive_with"] == ["turbofieldfare"]
     # Commands, and the option values that go into them, never leave the server.
     assert ".sh" not in r.text and "~/" not in r.text and "killall" not in r.text
     assert "pgrep" not in r.text and "jq" not in r.text and "262144" not in r.text
@@ -161,8 +162,8 @@ async def test_turbofieldfare_run_with_context(client, fake_runner, options, con
         f"; ~/TurboFF/run-turboff.sh -model gemma4-8bit -ctx {context} -host 192.168.1.101 -port 8080")
     assert "curl -fs -o /dev/null --max-time 5 http://192.168.1.101:8080/v1/models" in commands[2]
     assert [timeout for _, timeout in fake_runner.calls] == [60, 360, 60]
-    # Before the run: is mlx_lm.server on?
-    assert len(fake_runner.probes) == 1 and "pgrep -f '[/]mlx_lm[.]server( |$)'" in fake_runner.probes[0]
+    # Before the run: is mlx_vlm.server on?
+    assert len(fake_runner.probes) == 1 and "pgrep -f '[/]mlx_vlm[.]server( |$)'" in fake_runner.probes[0]
 
 
 async def test_mlx_run(client, fake_runner):
@@ -171,7 +172,8 @@ async def test_mlx_run(client, fake_runner):
     job = await wait_done(client, r.json()["job_id"])
     assert job["state"] == "succeeded" and job["options"] == {}
     assert fake_runner.remote_commands[1].endswith(
-        "; ~/MLX/run-mlx.sh -model mlx-community/Qwen3.8-27B-4bit -host 192.168.1.101 -port 8080")
+        "; ~/MLX/run-mlx.sh -model mlx-community/Qwen3.8-27B-4bit"
+        " -draft-model mlx-community/Qwen3.8-27B-MTP-4bit -host 192.168.1.101 -port 8080")
 
 
 @pytest.mark.parametrize("options", [{"context": "32k"}, {"ctx": "64k"}, {"context": "64k; rm -rf ~"},
@@ -190,7 +192,7 @@ async def test_options_of_a_section_without_options_are_400(client, fake_runner)
 
 @pytest.mark.parametrize(("path", "variant", "on", "other"), [
     (MLX, "qwen-q4", "TurboFieldfareServer", {"id": "turbofieldfare", "label": "TurboFieldfare", "reason": "on"}),
-    (TURBO, "gemma-q4", "mlx_lm", {"id": "mlx-lm", "label": "mlx_lm.server", "reason": "on"}),
+    (TURBO, "gemma-q4", "mlx_vlm", {"id": "mlx-vlm", "label": "MLX", "reason": "on"}),
 ])
 async def test_mac_engines_exclude_each_other(client, fake_runner, path, variant, on, other):
     fake_runner.probe_codes[on] = 0

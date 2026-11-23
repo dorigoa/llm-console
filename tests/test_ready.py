@@ -101,7 +101,7 @@ def test_strata_running_command(tmp_path, stdout, exit_code, expected):
 
 @pytest.mark.parametrize(("section", "argv0"), [
     ("turbofieldfare", "/Users/x/.local/lib/turbofieldfare/TurboFieldfareServer"),
-    ("mlx-lm", "/Users/x/.local/bin/mlx_lm.server"),
+    ("mlx-vlm", "/Users/x/.local/bin/mlx_vlm.server"),
 ])
 def test_mac_running_commands(section, argv0):
     """config.yaml's `running` of the Mac engines, with a real pgrep -f: on while a

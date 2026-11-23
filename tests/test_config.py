@@ -49,7 +49,7 @@ def test_repo_config_mac_tab():
     mac = config.tab("mac")
     assert config.hosts[mac.host].address == "192.168.1.101"
     turbo, mlx = mac.sections
-    assert (turbo.id, mlx.id) == ("turbofieldfare", "mlx-lm")
+    assert (turbo.id, mlx.id) == ("turbofieldfare", "mlx-vlm")
     assert list(turbo.variants) == ["gemma-q8", "gemma-q4", "qwen36-q4"]
     assert turbo.default_variant == "gemma-q8"
     context = turbo.options["context"]
@@ -61,11 +61,16 @@ def test_repo_config_mac_tab():
     assert turbo.command("qwen36-q4", {"context": "64k"}).startswith(
         "~/TurboFF/run-turboff.sh -model qwen36 -ctx 65536 ")
     assert turbo.stop == "~/TurboFF/stop.sh" and turbo.stop_before_run
-    assert list(mlx.variants) == ["qwen-q4"] and mlx.default_variant == "qwen-q4" and not mlx.options
+    assert list(mlx.variants) == ["gemma-q4", "qwen-q4"] and mlx.default_variant == "qwen-q4" and not mlx.options
     assert mlx.command("qwen-q4", {}) == (
-        "~/MLX/run-mlx.sh -model mlx-community/Qwen3.8-27B-4bit -host 192.168.1.101 -port 8080")
+        "~/MLX/run-mlx.sh -model mlx-community/Qwen3.8-27B-4bit"
+        " -draft-model mlx-community/Qwen3.8-27B-MTP-4bit -host 192.168.1.101 -port 8080")
+    # Gemma has no MLX drafter: without -draft-model none the script would add Qwen's.
+    assert mlx.command("gemma-q4", {}) == (
+        "~/MLX/run-mlx.sh -model mlx-community/gemma-4-31B-it-qat-4bit"
+        " -draft-model none -host 192.168.1.101 -port 8080")
     assert mlx.stop == "~/MLX/stop.sh" and mlx.stop_before_run
-    assert turbo.exclusive_with == ["mlx-lm"] and mlx.exclusive_with == ["turbofieldfare"]
+    assert turbo.exclusive_with == ["mlx-vlm"] and mlx.exclusive_with == ["turbofieldfare"]
     for section in (turbo, mlx):
         # No ready.process on macOS (no ss): the scripts check the port and the process.
         assert section.ready.url == "http://192.168.1.101:8080/v1/models" and section.ready.process is None
@@ -79,7 +84,7 @@ def test_repo_config_metrics():
         ("linux", "llama-server"): ("llama-server", "http://192.168.1.200:8000"),
         ("linux", "strata"): ("strata", "http://192.168.1.200:8000"),
         ("mac", "turbofieldfare"): ("turbofieldfare", "http://192.168.1.101:8080"),
-        ("mac", "mlx-lm"): ("mlx-lm", "http://192.168.1.101:8080"),
+        ("mac", "mlx-vlm"): ("mlx-vlm", "http://192.168.1.101:8080"),
     }
 
 
@@ -216,7 +221,7 @@ def test_ready_port(url, port):
     ({"metrics": {"kind": "strata", "url": "http://10.0.0.1:8000"},
       "ready": {"url": "http://10.0.0.1:9000/health"}}, "10.0.0.1:8000"),
     ({"ready": {"url": "http://10.0.0.1/health"}}, "10.0.0.1:80"),
-    ({"metrics": {"kind": "mlx-lm", "url": "https://[fd00::1]"}}, "[fd00::1]:443"),
+    ({"metrics": {"kind": "mlx-vlm", "url": "https://[fd00::1]"}}, "[fd00::1]:443"),
     ({}, None),
 ])
 def test_endpoint(extra, endpoint):

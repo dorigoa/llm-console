@@ -215,8 +215,7 @@ summary:focus-visible {
   background: var(--border);
   transform: translateY(-1px);
 }
-.card-live[data-state="idle"]::before,
-.card-live[data-state="serving"]::before { background: var(--ok); }
+.card-live[data-state="idle"]::before { background: var(--ok); }
 .card-live[data-state="prefill"]::before,
 .card-live[data-state="loading"]::before { background: var(--warn); }
 .card-live[data-state="generating"]::before,

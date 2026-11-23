@@ -7,7 +7,7 @@ import pytest
 
 from app.config import load_config
 from app.main import create_app
-from app.metrics import (LastRequest, LlamaServerReader, MetricsPoller, MlxLmReader, StrataReader,
+from app.metrics import (LastRequest, Live, LlamaServerReader, MetricsPoller, MlxVlmReader, StrataReader,
                          TurboFieldfareReader, parse_prometheus)
 from conftest import REPO_CONFIG
 
@@ -317,37 +317,86 @@ async def test_turbofieldfare_older_build_is_busy_or_idle(engines, running, stat
         assert (await TurboFieldfareReader(MAC).read(client, now=1.0)).state == state
 
 
-async def test_mlx_lm_serving_or_not(engines):
-    reader = MlxLmReader(MAC)
+def mlx_vlm_metrics(in_flight=0, latest=None, ready=True, preloading=False, failures=None):
+    """mlx_vlm 0.8's /metrics, trimmed (as it answered on the Mac on 23/11)."""
+    return {
+        "latest": latest,
+        "recent": [latest] if latest else [],
+        "summary": {"uptime_s": 60.0, "requests_started": 2 + in_flight, "requests_completed": 2,
+                    "requests_failed": 0, "in_flight": in_flight, "last_error": None},
+        "server": {"loaded_model": "mlx-community/Qwen3.8-27B-4bit" if ready else None,
+                   "model_ready": ready, "loaded_context_size": 262144,
+                   "configured_context_limit": None, "effective_context_limit": 262144,
+                   "continuous_batching_enabled": True, "request_queue_depth": 0,
+                   "preload_failures": failures or {}, "preload_in_progress": preloading,
+                   "apc": {"enabled": False}},
+    }
+
+
+# The `latest` of a real request: 2605 prompt tokens, 400 generated, MTP on.
+MLX_LATEST = {"endpoint": "/chat/completions", "model": "mlx-community/Qwen3.8-27B-4bit",
+              "prompt_tokens": 2605, "completion_tokens": 400, "generated_tokens": 400,
+              "reasoning_tokens": 0, "total_tokens": 3005, "prompt_eval_time_s": 12.564,
+              "prefill_tok_s": 207.34, "ttft_s": 12.596, "decode_elapsed_s": 14.914,
+              "request_elapsed_s": 27.534, "decode_tok_s": 26.82, "finish_reason": "length"}
+
+
+async def test_mlx_vlm(engines):
+    reader = MlxVlmReader(MAC)
+    last = LastRequest(prefill_tok_s=207.34, gen_tok_s=26.82, context=3005, max_context=262144)
     async with engines.client() as client:
         with pytest.raises(httpx.ConnectError):     # nothing on the port: the poller says "off"
             await reader.read(client, now=1.0)
-        engines.set(f"{MAC}/metrics", "Not Found", status=404)
-        engines.set(f"{MAC}/health", {"status": "ok"})
-        assert (await reader.read(client, now=2.0)).state == "serving"
+        engines.set(f"{MAC}/metrics", mlx_vlm_metrics(ready=False, preloading=True))
+        assert (await reader.read(client, now=2.0)) == Live("loading")
+        engines.set(f"{MAC}/metrics", mlx_vlm_metrics())
+        assert (await reader.read(client, now=3.0)) == Live("idle")       # no request yet
+        engines.set(f"{MAC}/metrics", mlx_vlm_metrics(in_flight=1, latest=MLX_LATEST))
+        assert (await reader.read(client, now=4.0)) == Live("busy", last=last)
+        engines.set(f"{MAC}/metrics", mlx_vlm_metrics(latest=MLX_LATEST))
+        assert (await reader.read(client, now=5.0)) == Live("idle", last=last)
+
+
+async def test_mlx_vlm_unloaded_or_failed(engines):
+    reader = MlxVlmReader(MAC)
+    async with engines.client() as client:
+        engines.set(f"{MAC}/metrics", mlx_vlm_metrics(ready=False))       # after POST /unload
+        assert (await reader.read(client, now=1.0)).state == "unloaded"
+        # A request loads it again on demand: busy meanwhile.
+        engines.set(f"{MAC}/metrics", mlx_vlm_metrics(ready=False, in_flight=1))
+        assert (await reader.read(client, now=2.0)).state == "busy"
+        failures = {"text_generation": {"model": "m", "label": "language model",
+                                        "error": "IncompleteSnapshotError"}}
+        engines.set(f"{MAC}/metrics", mlx_vlm_metrics(ready=False, failures=failures))
+        live = await reader.read(client, now=3.0)
+        assert (live.state, live.note) == ("unknown", "loading the model failed: IncompleteSnapshotError")
+
+
+async def test_mlx_vlm_and_turbofieldfare_share_the_port(engines):
+    async with engines.client() as client:
         engines.set(f"{MAC}/metrics", turbo_metrics("idle", 1))           # TurboFieldfare is on
-        assert (await reader.read(client, now=3.0)).state == "off"
-        # And the TurboFieldfare reader does not take mlx_lm.server's 404 for itself.
-        engines.set(f"{MAC}/metrics", "Not Found", status=404)
-        assert (await TurboFieldfareReader(MAC).read(client, now=4.0)).state == "off"
+        live = await MlxVlmReader(MAC).read(client, now=1.0)
+        assert (live.state, live.note) == ("off", "no mlx_vlm metrics (HTTP 200)")
+        engines.set(f"{MAC}/metrics", mlx_vlm_metrics(latest=MLX_LATEST))  # mlx_vlm is on
+        live = await TurboFieldfareReader(MAC).read(client, now=2.0)
+        assert (live.state, live.note) == ("off", "no TurboFieldfare metrics (HTTP 200)")
 
 
 async def test_poller_reads_every_section_of_the_config(engines):
     engines.set(f"{PC}/metrics", llama_metrics())
     engines.set(f"{PC}/slots", [slot(processing=False)])
-    engines.set(f"{MAC}/metrics", "Not Found", status=404)
-    engines.set(f"{MAC}/health", {"status": "ok"})
+    engines.set(f"{MAC}/metrics", mlx_vlm_metrics())
     clock = iter([10.0, 13.0])
     poller = MetricsPoller(load_config(REPO_CONFIG), engines.client(), clock=lambda: next(clock),
                            wallclock=lambda: 1000.0)
-    assert sorted(poller.readers) == ["linux/llama-server", "linux/strata", "mac/mlx-lm",
+    assert sorted(poller.readers) == ["linux/llama-server", "linux/strata", "mac/mlx-vlm",
                                       "mac/turbofieldfare"]
     await poller.poll_once()
     sections = poller.view()["sections"]
     assert sections["linux/llama-server"]["state"] == "idle"
     assert sections["linux/strata"]["state"] == "off"            # llama-server holds port 8000
-    assert sections["mac/mlx-lm"]["state"] == "serving"
-    assert sections["mac/turbofieldfare"]["state"] == "off"
+    assert sections["mac/mlx-vlm"]["state"] == "idle"
+    assert sections["mac/turbofieldfare"]["state"] == "off"      # mlx_vlm holds port 8080
     assert sections["linux/llama-server"]["age_s"] == 0.0
     assert poller.view()["interval"] == 3.0
     await poller.client.aclose()
@@ -398,12 +447,12 @@ async def test_api_metrics(engines, fake_runner):
     llama = data["sections"]["linux/llama-server"]
     assert (llama["state"], llama["prompt_done"], llama["prompt_total"]) == ("prefill", 100, None)
     assert llama["last"] is None             # the console has not seen a request end yet
-    assert data["sections"]["mac/mlx-lm"]["state"] == "off"
+    assert data["sections"]["mac/mlx-vlm"]["state"] == "off"
     assert all(s["has_metrics"] for t in config["tabs"] for s in t["sections"])
     # The page shows where each engine listens; the URLs the app polls stay on the server.
     endpoints = {f"{t['id']}/{s['id']}": s["endpoint"] for t in config["tabs"] for s in t["sections"]}
     assert endpoints == {"linux/llama-server": "192.168.1.200:8000", "linux/strata": "192.168.1.200:8000",
-                         "mac/turbofieldfare": "192.168.1.101:8080", "mac/mlx-lm": "192.168.1.101:8080"}
+                         "mac/turbofieldfare": "192.168.1.101:8080", "mac/mlx-vlm": "192.168.1.101:8080"}
     assert "http://" not in json.dumps(config)
 
 

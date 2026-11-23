@@ -89,7 +89,6 @@ function liveText(live) {
     case "unloaded": parts.push("Idle · model unloaded"); break;
     case "idle": parts.push("Idle"); break;
     case "busy": parts.push("Busy"); break;
-    case "serving": parts.push("Serving · no metrics from this engine"); break;
     case "prefill":
       parts.push(`Prefill · ${rateText(live.prefill_tok_s)}`);
       if (live.prompt_total) {

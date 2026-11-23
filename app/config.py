@@ -121,11 +121,11 @@ class Metrics(_Model):
 
     `kind` says what the engine at `url` answers and how to read it (see
     app/metrics.py): llama-server (/slots and /metrics), strata (/metrics in
-    JSON), turbofieldfare (/metrics), mlx-lm (no metrics: /health only). Engines
-    that share a port tell each other apart by those answers.
+    JSON), turbofieldfare (/metrics), mlx-vlm (/metrics in JSON). Engines that
+    share a port tell each other apart by those answers.
     """
 
-    kind: Literal["llama-server", "strata", "turbofieldfare", "mlx-lm"]
+    kind: Literal["llama-server", "strata", "turbofieldfare", "mlx-vlm"]
     # The engine's root, e.g. http://192.168.1.200:8000 (no path).
     url: str
 

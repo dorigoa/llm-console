@@ -3,7 +3,7 @@
 Every POLL_SECONDS the app asks every section with `metrics` in config.yaml, all
 at once, and keeps the latest answer; the page shows it as the card's live line.
 An engine counts as on when its endpoint answers the way that kind of engine
-does: llama-server and Strata share port 8000, TurboFieldfare and mlx_lm.server
+does: llama-server and Strata share port 8000, TurboFieldfare and mlx_vlm.server
 share 8080, and each reader recognizes its own engine's answer (anything else is
 "off").
 
@@ -18,7 +18,9 @@ What each kind gives (see PLAN.md §15 and §16):
 - turbofieldfare: /metrics, with the running_* gauges of the fork (phase, prompt
   progress, tokens so far, speeds) and its last_* gauges; an older build gives
   busy/idle only.
-- mlx-lm: no metrics at all; /health answering (and /metrics not) = serving.
+- mlx-vlm: /metrics in JSON: the model loading, requests in flight (busy, with no
+  phase or tokens so far: it records a request when it ends), and the last
+  request with its speeds and tokens. No MTP acceptance.
 
 Speeds measured by the app are differences between two polls of the same request
 in the same phase; in between, the line shows the phase without a speed.
@@ -67,7 +69,7 @@ class LastRequest:
 class Live:
     """One engine at one poll."""
 
-    # off | loading | unloaded | idle | busy | prefill | generating | serving | unknown
+    # off | loading | unloaded | idle | busy | prefill | generating | unknown
     state: str
     prefill_tok_s: float | None = None
     gen_tok_s: float | None = None
@@ -323,22 +325,51 @@ class TurboFieldfareReader(Reader):
         return Live("idle", last=last)
 
 
-class MlxLmReader(Reader):
+class MlxVlmReader(Reader):
+    """/metrics in JSON (mlx_vlm 0.8): `server` is the state of the model (loading,
+    ready, failed), `summary.in_flight` the requests running, `latest` the last
+    finished one. mlx_vlm records a request only when it ends, so while one runs
+    there is no phase and no token count: busy. The MTP drafts are only in each
+    answer's `timings`, not here."""
+
     async def read(self, client: httpx.AsyncClient, now: float) -> Live:
         r = await client.get(f"{self.url}/metrics")
-        if r.status_code != 404:             # TurboFieldfare answers /metrics on the same port
-            return self.off(f"another engine answers (HTTP {r.status_code} on /metrics)")
-        health = await client.get(f"{self.url}/health")
-        if health.status_code != 200:
-            return self.off(f"/health: HTTP {health.status_code}")
-        return Live("serving")
+        data = _json(r) if r.status_code == 200 else None
+        if (not isinstance(data, dict) or not isinstance(data.get("server"), dict)
+                or not isinstance(data.get("summary"), dict)):
+            return self.off(f"no mlx_vlm metrics (HTTP {r.status_code})")
+        server = data["server"]
+        last = _mlx_vlm_last(data.get("latest"), server)
+        if server.get("preload_in_progress"):            # the model given with --model
+            return Live("loading", last=last)
+        if (data["summary"].get("in_flight") or 0) > 0:  # loading on demand counts too
+            return Live("busy", last=last)
+        if server.get("model_ready"):
+            return Live("idle", last=last)
+        failed = (server.get("preload_failures") or {}).get("text_generation")
+        if isinstance(failed, dict):
+            return Live("unknown", note=f"loading the model failed: {failed.get('error')}", last=last)
+        return Live("unloaded", last=last)
+
+
+def _mlx_vlm_last(latest: Any, server: dict) -> LastRequest | None:
+    """The engine's own speeds of the last request: prompt tokens per second of
+    prefill, and generated tokens (thinking included) per second of decode."""
+    if not isinstance(latest, dict):
+        return None
+    prompt, generated = latest.get("prompt_tokens"), latest.get("generated_tokens")
+    return LastRequest(
+        prefill_tok_s=latest.get("prefill_tok_s"),
+        gen_tok_s=latest.get("decode_tok_s"),
+        context=int(prompt) + int(generated or 0) if prompt else None,
+        max_context=_int(server.get("effective_context_limit"))).known()
 
 
 READERS: dict[str, type[Reader]] = {
     "llama-server": LlamaServerReader,
     "strata": StrataReader,
     "turbofieldfare": TurboFieldfareReader,
-    "mlx-lm": MlxLmReader,
+    "mlx-vlm": MlxVlmReader,
 }
 
 

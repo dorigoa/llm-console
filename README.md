@@ -14,7 +14,7 @@ The page has one tab per host and one card per engine. Each card has a green **R
 - The card's header shows the address and port the engine serves on.
 
 The Linux tab drives llama-server and Strata on a PC; the Mac tab drives TurboFieldfareServer and
-mlx_lm.server on a Mac Studio.
+mlx_vlm.server (with an MTP drafter) on a Mac Studio.
 
 It runs in a rootless podman container on a small Linux box (the author's is a Raspberry Pi) and listens
 on `127.0.0.1:80`. Two optional front doors make it reachable:
@@ -37,7 +37,7 @@ Design notes and decisions (in Italian): [PLAN.md](PLAN.md).
   engine that uses the same GPUs is on. It succeeds only once the model's API (`/v1/models`) answers.
 - Every 3 seconds the app reads each engine's own endpoints over HTTP, not ssh, for the live lines.
   An engine counts as on when it answers the way that kind of engine does. Engines that share a port
-  tell each other apart that way: llama-server and Strata on the PC, TurboFieldfare and mlx_lm.server on
+  tell each other apart that way: llama-server and Strata on the PC, TurboFieldfare and mlx_vlm.server on
   the Mac. See [Live metrics](#live-metrics).
 
 ## Install on Linux from scratch
@@ -145,12 +145,12 @@ Both files are tracked by git. Your edits stay local, and updates keep them; see
   - `~/TurboFF/run-turboff.sh`, `~/TurboFF/stop.sh`, `~/MLX/run-mlx.sh` and `~/MLX/stop.sh`, from
     [dorigoa/TurboFF](https://github.com/dorigoa/TurboFF) and [dorigoa/MLX](https://github.com/dorigoa/MLX),
     cloned to `~/TurboFF` and `~/MLX`. A run script starts the server in the background, checks
-    the port first with `lsof`, and returns once the server answers or as soon as it exits. Each stop
-    script waits until its server has exited.
+    the port first with `lsof`, and returns once the model is loaded or as soon as the server exits.
+    Each stop script waits until its server has exited.
   - `TurboFieldfareServer` in `~/.local/bin`, built from
     [dorigoa/turbo-fieldfare-fork](https://github.com/dorigoa/turbo-fieldfare-fork) for the live line's
     `running_*` gauges.
-  - `mlx_lm.server` from `uv tool install mlx-lm`, also in `~/.local/bin`.
+  - `mlx_vlm.server` from `uv tool install mlx-vlm`, also in `~/.local/bin`.
 
 ### 8. Install and start
 
@@ -248,7 +248,7 @@ fields:
 | `ready: {url, process, timeout}` | A Run succeeds only once `url` answers 2xx (e.g. `/v1/models`). See below for `process`. |
 | `running` | Remote command telling whether the engine is on: exit 0 = on, 1 = off, anything else = cannot tell. |
 | `exclusive_with: [id, …]` | Sections of the same tab that cannot be on together with this one; each needs `running`. While one of them is on, or has a job running, Run is refused and the page says to stop it first. |
-| `metrics: {kind, url}` | The card's live line. `kind` is `llama-server`, `strata`, `turbofieldfare` or `mlx-lm`; `url` is the engine's root, e.g. `http://192.168.1.200:8000`. See [Live metrics](#live-metrics). The card's header shows its host and port (or those of `ready`'s `url`, without `metrics`). |
+| `metrics: {kind, url}` | The card's live line. `kind` is `llama-server`, `strata`, `turbofieldfare` or `mlx-vlm`; `url` is the engine's root, e.g. `http://192.168.1.200:8000`. See [Live metrics](#live-metrics). The card's header shows its host and port (or those of `ready`'s `url`, without `metrics`). |
 
 `process` in `ready` is optional. It is for a script that starts the server in the background and returns
 at once, such as `run-qwen3.8-27b.sh`. With `process`:
@@ -256,7 +256,7 @@ at once, such as `run-qwen3.8-27b.sh`. With `process`:
 - after the Run, `process` must also be listening on that port, and the Run fails as soon as it dies.
 
 These checks use `ss` and `pgrep -x`, so `process` needs a Linux host. macOS has no `ss`, and
-`mlx_lm.server` runs as `python`. On the Mac, leave `process` out and let the run script do the checks
+`mlx_vlm.server` runs as `python`. On the Mac, leave `process` out and let the run script do the checks
 and the waiting, as `~/TurboFF/run-turboff.sh` does.
 
 Hosts, tabs and the ssh settings are at the top of the file; the comments there explain them.
@@ -271,7 +271,7 @@ page reads the latest answers from `/api/metrics`. What each kind of engine give
 | `llama-server` | `/slots` and `/metrics` (`--metrics`) | From `/slots`: prefill (prompt tokens read so far, no total) or generating (tokens so far). Prefill speed is the average since the phase began; generation speed is over the last 3 s. The `/metrics` counters move only when a prefill or a request ends, so they cannot give these. | The `/metrics` counters move when a request ends: what they moved by is that request's prefill and generation tokens and seconds (the engine's own timings) and its MTP drafts (`spec_decode_num_accepted_tokens_total` / `…_draft_tokens_total`). The context is `n_prompt_tokens` of the idle slot that ran it, of the slot's `n_ctx`. After the console restarts, the counters hold only the sum of the requests so far: speeds and acceptance come back with the next request. |
 | `strata` | `/metrics` in JSON (what Strata's Monitor shows) | Reading (prompt read of total, average speed) or generating (speed, tokens so far) | The newest of its `requests`, read as Strata's own `timings` are: prompt tokens read over `prompt_ms`, `decode_tok_s`, prompt + output tokens of `max_context`, drafts accepted / offered |
 | `turbofieldfare` | `/metrics` | The `turbofieldfare_running_*` gauges of [dorigoa/turbo-fieldfare-fork](https://github.com/dorigoa/turbo-fieldfare-fork): phase, prompt progress, tokens so far, speeds. An older build says only busy or idle. | The `turbofieldfare_last_*` gauges (a speed stays from an earlier request when the last did no work in that phase) and `context_max_tokens`; no MTP |
-| `mlx-lm` | `/health` (and `/metrics` answering 404) | None: mlx_lm.server has no metrics, so the line only says it serves | — |
+| `mlx-vlm` | `/metrics` in JSON (mlx_vlm 0.8) | Loading, then busy or idle only: mlx_vlm records a request when it ends, so there is no phase or token count while one runs | `latest`: the engine's `prefill_tok_s` and `decode_tok_s`, prompt + generated tokens of `effective_context_limit`. No MTP acceptance: mlx_vlm gives the drafts only in each answer's `timings` (`draft_n_accepted` / `draft_n`) |
 
 The prefill speed counts only the prompt tokens the engine computed, not those it took from a cache.
 While the engine runs the next request, the line keeps the last one's MTP acceptance.
