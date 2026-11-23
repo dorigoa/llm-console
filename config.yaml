@@ -166,8 +166,8 @@ tabs:
         run_timeout: 360    # the script itself gives up after 300 s
         stop_timeout: 60
         default_variant: qwen-q4
-        # The script also passes --max-tokens 65536 --kv-bits 8 --enable-thinking
-        # --thinking-budget 8192 (its defaults).
+        # The script also passes --max-tokens 32768 --kv-bits 8 --enable-thinking
+        # --thinking-budget 4096 and the prefix cache (its defaults).
         variants:           # from the Hugging Face cache in /Volumes/Home/hf_models
           gemma-q4:         # 17,559 MiB of weights (the QAT one, 27,481, does not fit)
             # + MTP drafter gemma-4-31B-it-assistant-bf16 (Google's "assistant", 926 MiB):

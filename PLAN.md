@@ -1012,6 +1012,12 @@ Velocità misurate: ~27 tok/s in generazione, ~195–205 tok/s di prefill.
   64 in bf16);
 - APC: acceso (§18.2).
 
+**Applicato il 23/11** (tua richiesta, per coding, sysadmin Linux/macOS e hardware): i default di
+`~/MLX/run-mlx.sh` (dorigoa/MLX `31efb10`) sono ora `-thinking-budget 4096` e `-max-tokens 32768`, per entrambe le varianti; una
+richiesta può sempre mandare i suoi `thinking_budget` e `max_tokens`. Verificato su un avvio vero: il
+server gira con `--max-tokens 32768 --thinking-budget 4096`. Solo lo script e un commento di
+`config.yaml` sono cambiati: niente deploy necessario.
+
 ### 18.4 I drafter
 
 - **Qwen**: la variante passa `-draft-model mlx-community/Qwen3.8-27B-MTP-4bit` (anche il default
