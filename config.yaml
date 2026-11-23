@@ -169,7 +169,7 @@ tabs:
         # The script also passes --max-tokens 65536 --kv-bits 8 --enable-thinking
         # --thinking-budget 8192 (its defaults).
         variants:           # from the Hugging Face cache in /Volumes/Home/hf_models
-          gemma-q4:         # 27 GB of weights: Insufficient Memory with iogpu.wired_limit_mb 24000. No MLX drafter
+          gemma-q4:         # 27,481 MiB of weights: Insufficient Memory up to iogpu.wired_limit_mb 26000. No MLX drafter
             label: "Gemma-4-31B-it · 4 bit (QAT)"
             model: Gemma-4-31B-it QAT 4 bit (MLX)
             command: >-

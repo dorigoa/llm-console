@@ -950,4 +950,7 @@ Le prove sotto sono state fatte dall'API della console su raspy, quindi via ssh 
       `serving`.
 - Stop dalla console in 2 s; alla fine nessun engine acceso sul Mac.
 - [ ] Gemma-4-31B-it QAT 4 bit: il Run fallirà con "Insufficient Memory" finché `iogpu.wired_limit_mb`
-      non è abbastanza alto per 26,9 GiB di pesi più la KV (a 24000 non basta).
+      non supera i pesi (28.816.512.158 byte = 27.481 MiB, contro 15.310 di Qwen) più KV e buffer.
+      *23/11 20:50*, con il limite alzato da te a 26000: Run dalla console di raspy `failed` in 32 s,
+      con lo stesso errore; fermato con Stop dalla console. Il modello è grande per un 4 bit da 31B:
+      4 bit con gruppi da 64, ma il vocabolario da 262.144 token e il resto non quantizzato pesano.
