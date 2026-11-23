@@ -170,10 +170,10 @@ tabs:
         # --thinking-budget 8192 (its defaults).
         variants:           # from the Hugging Face cache in /Volumes/Home/hf_models
           gemma-q4:         # 27,481 MiB of weights: Insufficient Memory up to iogpu.wired_limit_mb 26000. No MLX drafter
-            label: "Gemma-4-31B-it · 4 bit (QAT)"
-            model: Gemma-4-31B-it QAT 4 bit (MLX)
+            label: "Gemma-4-31B-it · 4 bit"
+            model: Gemma-4-31B-it 4 bit (MLX)
             command: >-
-              ~/MLX/run-mlx.sh -model mlx-community/gemma-4-31B-it-qat-4bit
+              ~/MLX/run-mlx.sh -model mlx-community/gemma-4-31B-it-4bit
               -draft-model none -host 192.168.1.101 -port 8080
           qwen-q4:          # + MTP drafter Qwen3.8-27B-MTP-4bit (speculative decoding)
             label: "Qwen3.8-27B · 4 bit"
