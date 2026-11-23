@@ -1033,7 +1033,8 @@ Velocità misurate: ~27 tok/s in generazione, ~195–205 tok/s di prefill.
   | domanda breve con thinking (budget 800) | 18,9 tok/s | 42,2 tok/s (+123%) | 176 di 180 (98%) |
 
   Le risposte cominciano allo stesso modo con e senza drafter. Memoria di picco 20,4 GB, con il
-  limite GPU a 26000 MB. La variante Gemma in `config.yaml` passa ancora `-draft-model none`.
+  limite GPU a 26000 MB. Poi, su tua richiesta, la variante Gemma passa
+  `-draft-model mlx-community/gemma-4-31B-it-assistant-bf16` invece di `none`.
 
 ### 18.5 Criteri di accettazione (dopo il deploy)
 

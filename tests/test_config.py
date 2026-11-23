@@ -65,10 +65,10 @@ def test_repo_config_mac_tab():
     assert mlx.command("qwen-q4", {}) == (
         "~/MLX/run-mlx.sh -model mlx-community/Qwen3.8-27B-4bit"
         " -draft-model mlx-community/Qwen3.8-27B-MTP-4bit -host 192.168.1.101 -port 8080")
-    # Gemma has no MLX drafter: without -draft-model none the script would add Qwen's.
+    # Gemma names its own drafter: without -draft-model the script would add Qwen's.
     assert mlx.command("gemma-q4", {}) == (
         "~/MLX/run-mlx.sh -model mlx-community/gemma-4-31B-it-4bit"
-        " -draft-model none -host 192.168.1.101 -port 8080")
+        " -draft-model mlx-community/gemma-4-31B-it-assistant-bf16 -host 192.168.1.101 -port 8080")
     assert mlx.stop == "~/MLX/stop.sh" and mlx.stop_before_run
     assert turbo.exclusive_with == ["mlx-vlm"] and mlx.exclusive_with == ["turbofieldfare"]
     for section in (turbo, mlx):
