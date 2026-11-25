@@ -56,8 +56,8 @@ tabs:
         options:            # the {…} in the commands above
           context:          # tokens: the radio buttons show the ids
             legend: Context
-            description: Raise it to fit more in the context; it costs GPU memory.
-            default: 32k
+            description: Lower if model load fails for exhausted memory (lower means less GPU memory).
+            default: 256k
             choices:
               32k: 32768
               64k: 65536
@@ -66,7 +66,7 @@ tabs:
           kv8:              # a checkbox: checked adds the flag, unchecked adds nothing
             kind: checkbox
             legend: KV cache
-            description: "8 bit KV cache: less memory, a small quality loss."
+            description: "8 bit KV cache: for large prompt uses less memory; a small quality loss."
             choices:
               "on": { value: " -kv8", label: "8 bit" }   # quoted: bare on/off are YAML booleans
           mtp:
