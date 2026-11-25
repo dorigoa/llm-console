@@ -1114,3 +1114,48 @@ Nel dialog di Run della sezione llama-server (tab Linux), oltre al modello:
   - Run con la spunta MTP: comando `-no-mtp`, e nella riga live la generazione senza MTP
     (nessuna percentuale di accettazione);
   - riga di stato "… (context 128k, kv cache 8 bit, mtp off)…".
+
+---
+
+## 20. llama-server crasha al caricamento: firmware GPU (25/11/2026)
+
+### 20.1 Sintomo
+
+Dalle 23:16 il Run di llama-server (Qwen3.8-27B 8 bit) falliva: il processo moriva pochi secondi
+dopo `llama threadpool init`, prima di `model loaded`. Nei log `~/Llama/llama-server-*.log` compariva
+`free(): invalid pointer`, nel kernel `general protection fault … in libigc.so.2.40.14` (il
+compilatore JIT di Intel che compila i kernel SYCL) oppure `in libc.so.6`. Non sempre: una prova
+manuale su tre è arrivata a caricarsi. Riprodotto via ssh con lo stesso comando dell'app: né l'app
+né lo script c'entrano.
+
+### 20.2 Causa
+
+Alle 23:01 `apt-get install -y linux-firmware-intel-graphics` aveva riportato il pacchetto alla
+20260915 (annullando il downgrade del 24/11 20:55); il riavvio delle 23:03 l'ha caricato.
+
+| Avvio | Firmware intel-graphics | GuC (Arc B70) | Kernel | llama-server |
+|---|---|---|---|---|
+| 24/11 21:12 | 20260319 (dalle 20:55) | — | 7.3.0-11 | ok |
+| 24/11 23:29 | 20260319 | 70.58.0 | 7.0.0-44 | ok (tutti i log fino alle 16:32 del 25/11) |
+| 25/11 23:03 | **20260915** | **70.72.1** | 7.3.0-11 | crash |
+| 25/11 23:28 | 20260319, in hold | 70.58.0 | 7.3.0-11 | ok |
+
+Il kernel 7.3.0-11 con il firmware vecchio funziona: la causa è il firmware (GuC 70.72.1).
+
+### 20.3 Correzione (25/11 23:27)
+
+```bash
+sudo apt-get install --allow-downgrades ~/tmp/linux-firmware-intel-graphics_20260319.git217ca6e4-0ubuntu2.1_all.deb
+sudo apt-mark hold linux-firmware-intel-graphics
+sudo reboot
+```
+
+Dopo il riavvio `journalctl -k | grep GuC` mostra `70.58.0` su entrambe le schede; Qwen 8 bit, 32k,
+MTP: pronto in 39 s, ~44 tok/s, nessun general protection fault.
+
+- Il pacchetto resta in **hold**: `apt upgrade` non lo aggiorna. Per provare un firmware più nuovo:
+  `sudo apt-mark unhold linux-firmware-intel-graphics`, poi riprovare un Run di llama-server prima
+  di considerarlo buono.
+- In `~/tmp` sul PC ci sono anche la 20260709 (non provata) e la 20260319.
+- Se Run torna a fallire con `free(): invalid pointer` o un fault in `libigc`, controllare per primo
+  la versione del GuC.
