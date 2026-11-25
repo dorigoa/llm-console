@@ -23,6 +23,10 @@ Ident = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")]
 # Not ${...} (a shell variable), and no spaces or commas ({ a; b; }, {a,b} are shell).
 PLACEHOLDER = re.compile(r"(?<!\$)\{([a-z0-9][a-z0-9_-]*)\}")
 
+# State of an unchecked checkbox option: the API accepts it and the job records it;
+# in the command its placeholder becomes empty.
+OFF = "off"
+
 
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -77,15 +81,22 @@ class Option(_Model):
 
     The browser sends only the id of the chosen choice; its value replaces
     {<option id>} in the command of the variant being run.
+
+    A checkbox (kind: checkbox) has exactly one choice: when checked the choice's
+    value replaces the placeholder, when unchecked ("off") the placeholder
+    becomes empty, e.g. an optional flag (-kv8, -no-mtp).
     """
 
     legend: str
     # One line under the legend.
     description: str | None = None
+    # "radio" (the default): a group of radio buttons. "checkbox": one checkbox.
+    kind: Literal["radio", "checkbox"] = "radio"
     # Choice id -> value (or {value, label}), in the order of the radio buttons.
     choices: dict[Ident, Choice]
-    # Selected when the dialog opens, and used when a Run does not name a choice;
-    # None = none (a Run must then name one).
+    # Selected when the dialog opens (the checkbox checked), and used when a Run
+    # does not name a choice; None = none (a Run must then name one; a checkbox
+    # is off).
     default: Ident | None = None
 
     @field_validator("choices", mode="before")
@@ -99,6 +110,8 @@ class Option(_Model):
     def _check_choices(self) -> Option:
         if not self.choices:
             raise ValueError(f"option {self.legend!r} has no choices")
+        if self.kind == "checkbox" and len(self.choices) != 1:
+            raise ValueError(f"checkbox option {self.legend!r} must have exactly one choice")
         if self.default is not None and self.default not in self.choices:
             raise ValueError(f"option {self.legend!r}: default {self.default!r} is not a choice")
         return self
@@ -171,8 +184,8 @@ class Section(_Model):
     variants: dict[Ident, Variant] = Field(default_factory=dict)
     # Radio button selected when the dialog opens; None = none.
     default_variant: Ident | None = None
-    # More radio groups in the Run dialog (option id -> Option), after the
-    # variants; every variant command must contain {<option id>}.
+    # More radio groups or checkboxes in the Run dialog (option id -> Option),
+    # after the variants; every variant command must contain {<option id>}.
     options: dict[Ident, Option] = Field(default_factory=dict)
     stop: str | None = None
     # Run first runs `stop` (its exit code is ignored), then the variant: switching
@@ -230,13 +243,21 @@ class Section(_Model):
     def choose(self, requested: dict[str, str]) -> dict[str, str]:
         """Option id -> choice id for a Run: the requested ones, else the defaults.
 
-        ValueError for an unknown option or choice, or an option with no choice
-        and no default.
+        A checkbox is "off" when unchecked, omitted, or left to a missing default.
+        ValueError for an unknown option or choice, or a radio option with no
+        choice and no default.
         """
         if unknown := set(requested) - set(self.options):
             raise ValueError(f"Unknown option: {', '.join(sorted(unknown))}")
         chosen = {}
         for option_id, option in self.options.items():
+            if option.kind == "checkbox":
+                on = next(iter(option.choices))
+                value = requested.get(option_id, option.default)
+                if value not in (None, OFF, on):
+                    raise ValueError(f"Unknown {option.legend} choice: {value}")
+                chosen[option_id] = on if value == on else OFF
+                continue
             choice = requested.get(option_id, option.default)
             if choice is None:
                 raise ValueError(f"Choose a value for {option.legend}")
@@ -246,8 +267,15 @@ class Section(_Model):
         return chosen
 
     def command(self, variant_id: str, chosen: dict[str, str]) -> str:
-        """The variant's command with {<option id>} replaced by the chosen values."""
-        values = {o: self.options[o].choices[c].value for o, c in chosen.items()}
+        """The variant's command with {<option id>} replaced by the chosen values.
+
+        An unchecked checkbox replaces its placeholder with nothing.
+        """
+        values = {}
+        for option_id, choice in chosen.items():
+            option = self.options[option_id]
+            values[option_id] = ("" if option.kind == "checkbox" and choice == OFF
+                                 else option.choices[choice].value)
         return PLACEHOLDER.sub(lambda m: values[m.group(1)], self.variants[variant_id].command)
 
     @property

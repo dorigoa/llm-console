@@ -347,6 +347,8 @@ legend {
 /* Run options (e.g. the context size): short choices, side by side. */
 #run-options fieldset { margin-top: 16px; }
 #run-options .radios { grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); }
+/* A checkbox option is a single item: keep it the width of its text. */
+#run-options .radios:has(> .checkbox) { grid-template-columns: auto; }
 .option-desc { margin: -4px 0 8px; font-size: 0.85rem; }
 
 .radio {

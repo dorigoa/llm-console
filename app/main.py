@@ -90,6 +90,7 @@ def _config_view(config: Config, dry_run: bool) -> dict:
                             "id": option_id,
                             "legend": o.legend,
                             "description": o.description,
+                            "kind": o.kind,
                             "default": o.default,
                             "choices": [{"id": k, "label": c.label or k} for k, c in o.choices.items()],
                         }

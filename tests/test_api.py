@@ -62,7 +62,21 @@ async def test_config_view(client):
     assert strata["variants_legend"] == "Quantization"
     assert strata["default_variant"] is None
     assert strata["can_run"] and strata["can_stop"]
-    assert llama["options"] == [] and strata["options"] == []
+    assert llama["options"] == [
+        {"id": "context", "legend": "Context",
+         "description": "Raise it to fit more in the context; it costs GPU memory.",
+         "kind": "radio", "default": "32k",
+         "choices": [{"id": "32k", "label": "32k"}, {"id": "64k", "label": "64k"},
+                     {"id": "128k", "label": "128k"}, {"id": "256k", "label": "256k"}]},
+        {"id": "kv8", "legend": "KV cache",
+         "description": "8 bit KV cache: less memory, a small quality loss.",
+         "kind": "checkbox", "default": None,
+         "choices": [{"id": "on", "label": "8 bit"}]},
+        {"id": "mtp", "legend": "MTP",
+         "description": "Disable it to turn off speculative decoding.",
+         "kind": "checkbox", "default": None,
+         "choices": [{"id": "on", "label": "off"}]},
+    ] and strata["options"] == []
     assert mac["label"] == "Mac"
     assert mac["host"]["address"] == "192.168.1.101"
     turbo, mlx = mac["sections"]
@@ -71,7 +85,7 @@ async def test_config_view(client):
     assert turbo["options"] == [{
         "id": "context", "legend": "Context",
         "description": "Lower it when the Mac is short of memory (many apps open).",
-        "default": "256k",
+        "kind": "radio", "default": "256k",
         "choices": [{"id": "256k", "label": "256k"}, {"id": "128k", "label": "128k"},
                     {"id": "64k", "label": "64k"}],
     }]
@@ -297,16 +311,42 @@ async def test_llama_run_checks_port_runs_then_waits_ready(client, fake_runner, 
     r = await client.post(f"{LLAMA}/run", json={"variant": variant})
     job = await wait_done(client, r.json()["job_id"])
     assert job["state"] == "succeeded"
+    assert job["options"] == {"context": "32k", "kv8": "off", "mtp": "off"}  # the defaults
     stop, port_free, run, ready = fake_runner.remote_commands
     assert stop.endswith("; killall -q -w llama-server || true")
     assert "ss -ltnpH 'sport = :8000'" in port_free
-    assert run.endswith(f"; cd ~/Llama && {script}")
+    assert run.endswith(f"; cd ~/Llama && {script} -ctx 32768")
     assert "pgrep -x llama-server" in ready and "http://192.168.1.200:8000/v1/models" in ready
     assert [timeout for _, timeout in fake_runner.calls] == [60, 30, 60, 600]
     out = job["output_tail"]
     assert "[checking that port 8000 is free]" in out
     assert "[waiting for http://192.168.1.200:8000/v1/models to answer]" in out
     assert "$ while" not in out and "$ busy=" not in out  # generated scripts: shown by label
+
+
+@pytest.mark.parametrize(("options", "tail"), [
+    ({"context": "128k"}, "-ctx 131072"),
+    ({"context": "256k", "kv8": "on"}, "-ctx 262144 -kv8"),
+    ({"mtp": "on"}, "-ctx 32768 -no-mtp"),
+    ({"context": "64k", "kv8": "on", "mtp": "on"}, "-ctx 65536 -kv8 -no-mtp"),
+])
+async def test_llama_run_with_options(client, fake_runner, options, tail):
+    r = await client.post(f"{LLAMA}/run", json={"variant": "gemma-q4", "options": options})
+    assert r.status_code == 202
+    job = await wait_done(client, r.json()["job_id"])
+    assert job["state"] == "succeeded"
+    assert job["options"] == {**{"context": "32k", "kv8": "off", "mtp": "off"}, **options}
+    run = fake_runner.remote_commands[2]
+    assert run.endswith(f"; cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit {tail}")
+    assert "  " not in run  # the unchecked flags add nothing: no double spaces
+
+
+@pytest.mark.parametrize("options", [{"context": "33k"}, {"kv8": "yes"},
+                                     {"kv8": "on; rm -rf ~"}, {"mtp": "no"}])
+async def test_llama_bad_option_is_400(client, fake_runner, options):
+    r = await client.post(f"{LLAMA}/run", json={"variant": "qwen-q8", "options": options})
+    assert r.status_code == 400
+    assert fake_runner.calls == []
 
 
 async def test_llama_busy_port_stops_the_run(client, fake_runner):

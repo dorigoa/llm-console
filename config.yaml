@@ -40,19 +40,41 @@ tabs:
           qwen-q8:          # MTP embedded in the gguf
             label: "Qwen3.8-27B · 8 bit (UD-Q8_K_XL)"
             model: Qwen3.8-27B UD-Q8_K_XL
-            command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200
+            command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -ctx {context}{kv8}{mtp}
           qwen-q4:          # + MTP drafter gguf
             label: "Qwen3.8-27B · 4 bit (UD-Q4_K_XL)"
             model: Qwen3.8-27B UD-Q4_K_XL
-            command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -4bit
+            command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -4bit -ctx {context}{kv8}{mtp}
           gemma-q8:         # + MTP drafter mtp-gemma-4-31B-it-Q8_0
             label: "Gemma-4-31B-it · 8 bit (UD-Q8_K_XL)"
             model: Gemma-4-31B-it UD-Q8_K_XL
-            command: cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200
+            command: cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -ctx {context}{kv8}{mtp}
           gemma-q4:         # + MTP drafter mtp-gemma-4-31B-it-Q4_0
             label: "Gemma-4-31B-it · 4 bit (QAT UD-Q4_K_XL)"
             model: Gemma-4-31B-it QAT UD-Q4_K_XL
-            command: cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit
+            command: cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit -ctx {context}{kv8}{mtp}
+        options:            # the {…} in the commands above
+          context:          # tokens: the radio buttons show the ids
+            legend: Context
+            description: Raise it to fit more in the context; it costs GPU memory.
+            default: 32k
+            choices:
+              32k: 32768
+              64k: 65536
+              128k: 131072
+              256k: 262144
+          kv8:              # a checkbox: checked adds the flag, unchecked adds nothing
+            kind: checkbox
+            legend: KV cache
+            description: "8 bit KV cache: less memory, a small quality loss."
+            choices:
+              "on": { value: " -kv8", label: "8 bit" }   # quoted: bare on/off are YAML booleans
+          mtp:
+            kind: checkbox
+            legend: MTP
+            description: Disable it to turn off speculative decoding.
+            choices:
+              "on": { value: " -no-mtp", label: "off" }
         # -w: wait until it has exited (GPUs free); nothing running is not an error.
         stop: killall -q -w llama-server || true
         # Strata and llama-server use the same GPUs and port 8000: Run is refused

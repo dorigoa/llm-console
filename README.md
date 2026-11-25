@@ -242,7 +242,7 @@ fields:
 | `description` | One line under the card title and in the Run dialog, e.g. the models served. |
 | `variants_legend` | Legend over the radio buttons (default "Quantization"). |
 | `default_variant` | Radio button selected when the dialog opens. |
-| `options` | More radio groups in the Run dialog, after the variants: option id → `{legend, description, default, choices}`, where `choices` maps a choice id to its value, or to `{value, label}`. The chosen value replaces `{option id}` in the variant's command, and every variant must use every option. Example: the context size of TurboFieldfare, `-ctx {context}`. |
+| `options` | More radio groups or checkboxes in the Run dialog, after the variants: option id → `{kind, legend, description, default, choices}`, where `choices` maps a choice id to its value, or to `{value, label}`. The chosen value replaces `{option id}` in the variant's command, and every variant must use every option. Example: the context size of TurboFieldfare, `-ctx {context}`. A checkbox (`kind: checkbox`, one choice) is an optional flag: checked, its value replaces the placeholder; unchecked, the placeholder is left empty and the page sends `"off"` (which can override a checked `default`). Example: llama-server's `-no-mtp`. |
 | `stop_before_run` | Run first runs `stop`; its exit code is ignored. |
 | `run_timeout`, `stop_timeout` | Seconds before a step is killed. |
 | `ready: {url, process, timeout}` | A Run succeeds only once `url` answers 2xx (e.g. `/v1/models`). See below for `process`. |

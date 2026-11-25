@@ -29,11 +29,25 @@ def test_repo_config_loads():
     llama = linux.section("llama-server")
     assert list(llama.variants) == ["qwen-q8", "qwen-q4", "gemma-q8", "gemma-q4"]
     assert llama.default_variant == "qwen-q8"
-    assert llama.variants["qwen-q8"].command.endswith("./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200")
-    assert llama.variants["qwen-q4"].command.endswith(" -4bit")
-    assert llama.variants["gemma-q8"].command.endswith("./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200")
-    assert llama.variants["gemma-q4"].command.endswith(" -qat4bit")
+    assert llama.variants["qwen-q8"].command == (
+        "cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -ctx {context}{kv8}{mtp}")
+    assert llama.variants["qwen-q4"].command.endswith("-4bit -ctx {context}{kv8}{mtp}")
+    assert llama.variants["gemma-q8"].command == (
+        "cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -ctx {context}{kv8}{mtp}")
+    assert llama.variants["gemma-q4"].command.endswith("-qat4bit -ctx {context}{kv8}{mtp}")
     assert llama.variants["gemma-q4"].model == "Gemma-4-31B-it QAT UD-Q4_K_XL"
+    assert list(llama.options) == ["context", "kv8", "mtp"]
+    context = llama.options["context"]
+    assert context.kind == "radio" and context.default == "32k"
+    assert [c.value for c in context.choices.values()] == ["32768", "65536", "131072", "262144"]
+    kv8, mtp = llama.options["kv8"], llama.options["mtp"]
+    assert kv8.kind == "checkbox" and kv8.default is None and kv8.choices["on"].value == " -kv8"
+    assert mtp.kind == "checkbox" and mtp.choices["on"].value == " -no-mtp"
+    # Default Run: 32k of context, the usual KV cache, speculative decoding on.
+    assert llama.command("qwen-q8", llama.choose({})) == (
+        "cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -ctx 32768")
+    assert llama.command("gemma-q4", llama.choose({"context": "256k", "kv8": "on", "mtp": "on"})) == (
+        "cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit -ctx 262144 -kv8 -no-mtp")
     assert llama.stop.startswith("killall ") and llama.stop_before_run
     assert llama.ready.port == 8000 and llama.ready.process == "llama-server"
     assert llama.running == "pgrep -x llama-server >/dev/null"
@@ -135,6 +149,45 @@ def test_option_without_default_must_be_chosen():
     with pytest.raises(ValueError, match="Choose a value for Context"):
         section.choose({})
     assert section.choose({"context": "small"}) == {"context": "small"}
+
+
+def with_checkbox(command="run{flag}", **option):
+    flag = {"kind": "checkbox", "legend": "Flag", "choices": {"on": " -flag"}} | option
+    return minimal(sections=[{"id": "s", "label": "S", "variants": {"a": command}, "options": {"flag": flag}}])
+
+
+def test_checkbox_option():
+    section = Config.model_validate(with_checkbox()).tabs[0].sections[0]
+    # Off unless asked: the placeholder becomes nothing, and "off" is a valid value.
+    assert section.choose({}) == {"flag": "off"}
+    assert section.command("a", section.choose({})) == "run"
+    assert section.choose({"flag": "off"}) == {"flag": "off"}
+    assert section.command("a", section.choose({"flag": "on"})) == "run -flag"
+    assert section.command("a", {"flag": "on"}) == "run -flag"
+    # Checked by default, and "off" overrides it.
+    checked = Config.model_validate(with_checkbox(default="on")).tabs[0].sections[0]
+    assert checked.choose({}) == {"flag": "on"}
+    assert checked.choose({"flag": "off"}) == {"flag": "off"}
+
+
+@pytest.mark.parametrize(("requested", "match"), [
+    ({"flag": "yes"}, "Unknown Flag choice: yes"),
+    ({"flag": "on; rm -rf ~"}, "Unknown Flag choice"),
+])
+def test_checkbox_refuses(requested, match):
+    section = Config.model_validate(with_checkbox()).tabs[0].sections[0]
+    with pytest.raises(ValueError, match=match):
+        section.choose(requested)
+
+
+@pytest.mark.parametrize("option", [
+    {"choices": {"on": " -a", "off": " -b"}},   # a checkbox is one choice
+    {"default": "off"},                          # "off" is a state, not a choice
+    {"default": "no"},
+])
+def test_bad_checkbox(option):
+    with pytest.raises(ValidationError, match="choice"):
+        Config.model_validate(with_checkbox(**option))
 
 
 def test_shell_braces_are_not_placeholders():

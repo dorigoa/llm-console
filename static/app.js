@@ -6,13 +6,19 @@
 const POLL_MS = 2000;
 const POST_HEADERS = { "Content-Type": "application/json", "X-LLM-Console": "1" };
 const TAB_KEY = "llm-console.tab";
+// The unchecked state of a checkbox option (the server's config.OFF).
+const OFF = "off";
 
 // The model a Run of `variantId` serves (the variant id if it is no longer in the
 // config), with the chosen options: "Gemma-4-26B-A4B-it 8 bit (context 128k)".
 function modelOf(section, variantId, chosen = {}) {
   const variant = section.variants.find((v) => v.id === variantId);
   const model = variant ? variant.model : variantId;
-  const details = (section.options || []).filter((o) => chosen[o.id]).map((o) => {
+  const details = (section.options || []).filter((o) => {
+    // An unchecked checkbox ("off") chose nothing: it is not part of the label.
+    const id = chosen[o.id];
+    return id && (o.kind !== "checkbox" || id !== OFF);
+  }).map((o) => {
     const choice = o.choices.find((c) => c.id === chosen[o.id]);
     return `${o.legend.toLowerCase()} ${choice ? choice.label : chosen[o.id]}`;
   });
@@ -388,12 +394,14 @@ class RunDialog {
     return input ? input.value : null;
   }
 
-  // Option id -> chosen choice id (only the options with a selection).
+  // Option id -> chosen choice id (a checkbox, checked or not, always has one;
+  // an unchecked one is "off", which also overrides a checked default).
   chosenOptions() {
     const chosen = {};
     for (const option of this.card ? this.card.section.options || [] : []) {
       const input = this.optionsEl.querySelector(`input[name="option-${CSS.escape(option.id)}"]:checked`);
       if (input) chosen[option.id] = input.value;
+      else if (option.kind === "checkbox") chosen[option.id] = OFF;
     }
     return chosen;
   }
@@ -427,7 +435,20 @@ class RunDialog {
       }
       const radios = document.createElement("div");
       radios.className = "radios";
-      radios.append(...radioGroup(`option-${option.id}`, option.choices, option.default));
+      if (option.kind === "checkbox") {
+        const [choice] = option.choices;
+        const label = document.createElement("label");
+        label.className = "radio checkbox";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.name = `option-${option.id}`;
+        input.value = choice.id;
+        input.checked = option.default === choice.id;
+        label.append(input, choice.label || choice.id);
+        radios.append(label);
+      } else {
+        radios.append(...radioGroup(`option-${option.id}`, option.choices, option.default));
+      }
       fieldset.append(radios);
       return fieldset;
     }));

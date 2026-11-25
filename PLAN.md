@@ -603,6 +603,9 @@ l'immagine lo copia in `/app/VERSION` e l'app lo legge.
     un'opzione. `${VAR}`, `{a,b}`, `{1..3}` e `{ cmd; }` restano alla shell;
   - opzione o scelta sconosciuta → 400. Il job registra le scelte, e la riga di stato le mostra:
     "TurboFieldfare is launching Gemma-4-26B-A4B-it 8 bit (context 128k)…".
+  - `kind: checkbox` (aggiunto il 25/11, §19): un'opzione con una sola scelta, cioè una flag che
+    viene aggiunta al comando se la spunta è marcata (`-kv8`, `-no-mtp`); non marcata, il browser
+    manda `"off"` (che può quindi sovrascrivere un `default`) e il placeholder resta vuoto.
 
 ### 14.3 Prove (20/11, via ssh sul Mac, come farà raspy)
 
@@ -1064,3 +1067,50 @@ spenti).
         277 di 366 draft accettati;
       - card: generazione 35,1 tok/s, prefill 0,65 s, contesto 446 / 262.144;
       - Stop `succeeded` in 2 s; la card torna "Off".
+
+## 19. Run di llama-server: context, KV cache a 8 bit, MTP (25/11/2026)
+
+### 19.1 Richiesta
+
+Nel dialog di Run della sezione llama-server (tab Linux), oltre al modello:
+- scegliere la context size tra 32k, 64k, 128k, 256k → `-ctx <token>` dello script di start;
+- scegliere "KV cache 8 bit" → `-kv8`;
+- un checkbox per disabilitare lo speculative decoding → `-no-mtp`.
+
+### 19.2 Cosa è cambiato
+
+- **`Option.kind`** (`app/config.py`): i gruppi di radio restano il default (`kind: radio`); con
+  `kind: checkbox` un'opzione ha una sola scelta (validata) ed è una flag: marcata, il valore della
+  scelta (es. ` -no-mtp`) sostituisce il `{id}` nel comando della variante; non marcata, il browser
+  manda `"off"` — che può quindi sovrascrivere un `default` marcato — e `Section.command` lascia il
+  placeholder vuoto. `"off"` è uno stato, non una scelta: il job lo registra (es.
+  `{"context": "128k", "kv8": "off", "mtp": "off"}`) e la riga di stato mostra solo le opzioni
+  "fatte": "llama-server is launching Qwen3.8-27B UD-Q8_K_XL (context 128k, kv cache 8 bit,
+  mtp off)…".
+- **`/api/config`** espone ora il `kind` di ogni opzione; il dialog (`static/app.js`) disegna la
+  spunta (stesso stile dei bottoni radio, una sola riga) e la manda anche quando è non marcata.
+- **`config.yaml`, sezione llama-server**: le varianti terminano con `-ctx {context}{kv8}{mtp}`
+  (spazio iniziale nei valori delle flag: nessun doppio spazio se una flag non c'è);
+  - `context` (radio, default 32k): 32k → 32768, 64k → 65536, 128k → 131072, 256k → 262144,
+    come fa già la sezione TurboFieldfare sul Mac;
+  - `kv8` (checkbox, di default non marcata) → ` -kv8`;
+  - `mtp` (checkbox, di default non marcata) → ` -no-mtp`.
+- Prerequisito: gli script `~/Llama/run-*.sh` sul PC devono accettare `-ctx`, `-kv8` e `-no-mtp`
+  (verificare prima del deploy, §19.4).
+
+### 19.3 Prove
+
+- Test unitari: checkbox (default, "off", valori sconosciuti, una sola scelta) in `test_config.py`;
+  Run di llama-server con le tre opzioni e 400 sui valori male in `test_api.py`; la vista config
+  include il `kind`.
+
+### 19.4 Criteri di accettazione (dopo il deploy)
+
+- [ ] Su raspy: verificare che `~/Llama/run-*.sh` accettino `-ctx <token>`, `-kv8`, `-no-mtp`
+      (aggiungere gli argomenti agli script del repo `~/Llama` se non ce l'hanno già, e pushare).
+- [ ] Deploy (`git pull --autostash && container/install.sh`); dalla console:
+  - dialog di Run di llama-server con Model, Context, "KV cache" e la spunta "MTP";
+  - Run con 128k + KV 8 bit: comando `-ctx 131072 -kv8`, `succeeded`;
+  - Run con la spunta MTP: comando `-no-mtp`, e nella riga live la generazione senza MTP
+    (nessuna percentuale di accettazione);
+  - riga di stato "… (context 128k, kv cache 8 bit, mtp off)…".
