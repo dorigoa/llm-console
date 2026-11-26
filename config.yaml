@@ -104,25 +104,25 @@ tabs:
         stop_timeout: 120
         variants:           # in the order of the radio buttons
           iq4:
-            label: "iq4 · UD-IQ4_XS"
+            label: "iq4 · UD-IQ4_XS-v31"
             model: Qwen3.8-Flash-Next UD-IQ4_XS
-            command: ~/Strata/run-unsloth-ud-iq4_xs-v31.sh
+            command: ~/Strata/run-unsloth.sh --model iq4_xs-v31
           q4:
             label: "q4 · UD-Q4_K_XL"
             model: Qwen3.8-Flash-Next UD-Q4_K_XL
-            command: ~/Strata/run-unsloth-ud-q4_k_xl.sh
+            command: ~/Strata/run-unsloth.sh --model q4_k_xl
           q5:
             label: "q5 · UD-Q5_K_XL"
             model: Qwen3.8-Flash-Next UD-Q5_K_XL
-            command: ~/Strata/run-unsloth-ud-q5_k_xl.sh
+            command: ~/Strata/run-unsloth.sh --models q5_k_xl
           q6:
             label: "q6 · UD-Q6_K_XL"
             model: Qwen3.8-Flash-Next UD-Q6_K_XL
-            command: ~/Strata/run-unsloth-ud-q6_k_xl.sh
+            command: ~/Strata/run-unsloth.sh --models q6_k_xl
           q8:               # the model on the PC is Q8_0 (models/Q8_0)
             label: "q8 · Q8_0"
             model: Qwen3.8-Flash-Next Q8_0
-            command: ~/Strata/run-unsloth-ud-q8_k_xl.sh
+            command: ~/Strata/run-unsloth.sh --model q8_k_xl
         # strata launch --no-tui returns once the model answers: this only confirms
         # that the API does.
         ready:
