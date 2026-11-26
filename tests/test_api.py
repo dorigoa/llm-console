@@ -64,18 +64,23 @@ async def test_config_view(client):
     assert strata["can_run"] and strata["can_stop"]
     assert llama["options"] == [
         {"id": "context", "legend": "Context",
-         "description": "Raise it to fit more in the context; it costs GPU memory.",
-         "kind": "radio", "default": "32k",
+         "description": "Lower if model load fails for exhausted memory (lower means less GPU memory).",
+         "kind": "radio", "default": "256k",
          "choices": [{"id": "32k", "label": "32k"}, {"id": "64k", "label": "64k"},
                      {"id": "128k", "label": "128k"}, {"id": "256k", "label": "256k"}]},
         {"id": "kv8", "legend": "KV cache",
-         "description": "8 bit KV cache: less memory, a small quality loss.",
+         "description": "8 bit KV cache: for large prompt uses less memory; a small quality loss.",
          "kind": "checkbox", "default": None,
          "choices": [{"id": "on", "label": "8 bit"}]},
         {"id": "mtp", "legend": "MTP",
          "description": "Disable it to turn off speculative decoding.",
          "kind": "checkbox", "default": None,
          "choices": [{"id": "on", "label": "off"}]},
+        {"id": "batch", "legend": "Physical batch",
+         "description": "Prefill in chunks of this size: larger is faster for large prompts (more GPU memory).",
+         "kind": "radio", "default": "2048",
+         "choices": [{"id": "512", "label": "512"}, {"id": "1024", "label": "1024"},
+                     {"id": "2048", "label": "2048"}]},
     ] and strata["options"] == []
     assert mac["label"] == "Mac"
     assert mac["host"]["address"] == "192.168.1.101"
@@ -311,11 +316,11 @@ async def test_llama_run_checks_port_runs_then_waits_ready(client, fake_runner, 
     r = await client.post(f"{LLAMA}/run", json={"variant": variant})
     job = await wait_done(client, r.json()["job_id"])
     assert job["state"] == "succeeded"
-    assert job["options"] == {"context": "32k", "kv8": "off", "mtp": "off"}  # the defaults
+    assert job["options"] == {"context": "256k", "kv8": "off", "mtp": "off", "batch": "2048"}  # the defaults
     stop, port_free, run, ready = fake_runner.remote_commands
     assert stop.endswith("; killall -q -w llama-server || true")
     assert "ss -ltnpH 'sport = :8000'" in port_free
-    assert run.endswith(f"; cd ~/Llama && {script} -ctx 32768")
+    assert run.endswith(f"; cd ~/Llama && {script} -ctx 262144 -batch 2048")
     assert "pgrep -x llama-server" in ready and "http://192.168.1.200:8000/v1/models" in ready
     assert [timeout for _, timeout in fake_runner.calls] == [60, 30, 60, 600]
     out = job["output_tail"]
@@ -325,24 +330,26 @@ async def test_llama_run_checks_port_runs_then_waits_ready(client, fake_runner, 
 
 
 @pytest.mark.parametrize(("options", "tail"), [
-    ({"context": "128k"}, "-ctx 131072"),
-    ({"context": "256k", "kv8": "on"}, "-ctx 262144 -kv8"),
-    ({"mtp": "on"}, "-ctx 32768 -no-mtp"),
-    ({"context": "64k", "kv8": "on", "mtp": "on"}, "-ctx 65536 -kv8 -no-mtp"),
+    ({"context": "128k"}, "-ctx 131072 -batch 2048"),
+    ({"kv8": "on"}, "-ctx 262144 -batch 2048 -kv8"),
+    ({"mtp": "on"}, "-ctx 262144 -batch 2048 -no-mtp"),
+    ({"batch": "512"}, "-ctx 262144 -batch 512"),
+    ({"batch": "1024", "context": "64k"}, "-ctx 65536 -batch 1024"),
+    ({"context": "64k", "kv8": "on", "mtp": "on", "batch": "1024"}, "-ctx 65536 -batch 1024 -kv8 -no-mtp"),
 ])
 async def test_llama_run_with_options(client, fake_runner, options, tail):
     r = await client.post(f"{LLAMA}/run", json={"variant": "gemma-q4", "options": options})
     assert r.status_code == 202
     job = await wait_done(client, r.json()["job_id"])
     assert job["state"] == "succeeded"
-    assert job["options"] == {**{"context": "32k", "kv8": "off", "mtp": "off"}, **options}
+    assert job["options"] == {**{"context": "256k", "kv8": "off", "mtp": "off", "batch": "2048"}, **options}
     run = fake_runner.remote_commands[2]
     assert run.endswith(f"; cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit {tail}")
     assert "  " not in run  # the unchecked flags add nothing: no double spaces
 
 
 @pytest.mark.parametrize("options", [{"context": "33k"}, {"kv8": "yes"},
-                                     {"kv8": "on; rm -rf ~"}, {"mtp": "no"}])
+                                     {"kv8": "on; rm -rf ~"}, {"mtp": "no"}, {"batch": "4096"}])
 async def test_llama_bad_option_is_400(client, fake_runner, options):
     r = await client.post(f"{LLAMA}/run", json={"variant": "qwen-q8", "options": options})
     assert r.status_code == 400

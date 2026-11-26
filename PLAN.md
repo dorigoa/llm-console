@@ -1075,7 +1075,9 @@ spenti).
 Nel dialog di Run della sezione llama-server (tab Linux), oltre al modello:
 - scegliere la context size tra 32k, 64k, 128k, 256k → `-ctx <token>` dello script di start;
 - scegliere "KV cache 8 bit" → `-kv8`;
-- un checkbox per disabilitare lo speculative decoding → `-no-mtp`.
+- un checkbox per disabilitare lo speculative decoding → `-no-mtp`;
+- (aggiunta nella stessa giornata) scegliere il physical batch size tra 512, 1024 e 2048 →
+  `-batch <n>`: migliora le prestazioni sui prompt grandi.
 
 ### 19.2 Cosa è cambiato
 
@@ -1084,36 +1086,44 @@ Nel dialog di Run della sezione llama-server (tab Linux), oltre al modello:
   scelta (es. ` -no-mtp`) sostituisce il `{id}` nel comando della variante; non marcata, il browser
   manda `"off"` — che può quindi sovrascrivere un `default` marcato — e `Section.command` lascia il
   placeholder vuoto. `"off"` è uno stato, non una scelta: il job lo registra (es.
-  `{"context": "128k", "kv8": "off", "mtp": "off"}`) e la riga di stato mostra solo le opzioni
-  "fatte": "llama-server is launching Qwen3.8-27B UD-Q8_K_XL (context 128k, kv cache 8 bit,
-  mtp off)…".
+  `{"context": "128k", "kv8": "off", "mtp": "off", "batch": "2048"}`) e la riga di stato mostra
+  solo le opzioni "fatte": "llama-server is launching Qwen3.8-27B UD-Q8_K_XL (context 128k,
+  kv cache 8 bit, mtp off, physical batch 2048)…".
 - **`/api/config`** espone ora il `kind` di ogni opzione; il dialog (`static/app.js`) disegna la
   spunta (stesso stile dei bottoni radio, una sola riga) e la manda anche quando è non marcata.
-- **`config.yaml`, sezione llama-server**: le varianti terminano con `-ctx {context}{kv8}{mtp}`
-  (spazio iniziale nei valori delle flag: nessun doppio spazio se una flag non c'è);
-  - `context` (radio, default 32k): 32k → 32768, 64k → 65536, 128k → 131072, 256k → 262144,
+- **`config.yaml`, sezione llama-server**: le varianti terminano con
+  `-ctx {context} -batch {batch}{kv8}{mtp}` (spazio iniziale nei valori delle flag: nessun doppio
+  spazio se una flag non c'è);
+  - `context` (radio, default 256k): 32k → 32768, 64k → 65536, 128k → 131072, 256k → 262144,
     come fa già la sezione TurboFieldfare sul Mac;
   - `kv8` (checkbox, di default non marcata) → ` -kv8`;
-  - `mtp` (checkbox, di default non marcata) → ` -no-mtp`.
-- Prerequisito: gli script `~/Llama/run-*.sh` sul PC devono accettare `-ctx`, `-kv8` e `-no-mtp`
-  (verificare prima del deploy, §19.4).
+  - `mtp` (checkbox, di default non marcata) → ` -no-mtp`;
+  - `batch` (radio, default 2048 = il default di llama.cpp): 512, 1024, 2048 → `-batch <n>`
+    (id e valori numerici, quindi le chiavi YAML vanno fra virgolette).
+- Prerequisito: gli script `~/Llama/run-*.sh` sul PC devono accettare `-ctx`, `-batch`, `-kv8` e
+  `-no-mtp` (verificare prima del deploy, §19.4; il nome `-batch` segue la convenzione delle altre
+  flag lunghe degli script e il `--batch` di llama.cpp — se gli script usano `-b`, cambia un solo
+  token in `config.yaml`).
 
 ### 19.3 Prove
 
 - Test unitari: checkbox (default, "off", valori sconosciuti, una sola scelta) in `test_config.py`;
-  Run di llama-server con le tre opzioni e 400 sui valori male in `test_api.py`; la vista config
-  include il `kind`.
+  Run di llama-server con le quattro opzioni (inclusi i tre batch) e 400 sui valori male in
+  `test_api.py`; la vista config include il `kind`.
 
 ### 19.4 Criteri di accettazione (dopo il deploy)
 
-- [ ] Su raspy: verificare che `~/Llama/run-*.sh` accettino `-ctx <token>`, `-kv8`, `-no-mtp`
-      (aggiungere gli argomenti agli script del repo `~/Llama` se non ce l'hanno già, e pushare).
+- [ ] Su raspy: verificare che `~/Llama/run-*.sh` accettino `-ctx <token>`, `-batch <n>`, `-kv8`,
+      `-no-mtp` (aggiungere gli argomenti agli script del repo `~/Llama` se non ce l'hanno già, e
+      pushare).
 - [ ] Deploy (`git pull --autostash && container/install.sh`); dalla console:
-  - dialog di Run di llama-server con Model, Context, "KV cache" e la spunta "MTP";
-  - Run con 128k + KV 8 bit: comando `-ctx 131072 -kv8`, `succeeded`;
+  - dialog di Run di llama-server con Model, Context, "KV cache", la spunta "MTP" e "Physical
+    batch" (512/1024/2048);
+  - Run con 128k + KV 8 bit: comando `-ctx 131072 -batch 2048 -kv8`, `succeeded`;
+  - Run con batch 512: comando `-batch 512`;
   - Run con la spunta MTP: comando `-no-mtp`, e nella riga live la generazione senza MTP
     (nessuna percentuale di accettazione);
-  - riga di stato "… (context 128k, kv cache 8 bit, mtp off)…".
+  - riga di stato "… (context 128k, kv cache 8 bit, mtp off, physical batch 2048)…".
 
 ---
 

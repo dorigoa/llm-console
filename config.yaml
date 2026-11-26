@@ -40,19 +40,19 @@ tabs:
           qwen-q8:          # MTP embedded in the gguf
             label: "Qwen3.8-27B · 8 bit (UD-Q8_K_XL)"
             model: Qwen3.8-27B UD-Q8_K_XL
-            command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -ctx {context}{kv8}{mtp}
+            command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -ctx {context} -batch {batch}{kv8}{mtp}
           qwen-q4:          # + MTP drafter gguf
             label: "Qwen3.8-27B · 4 bit (UD-Q4_K_XL)"
             model: Qwen3.8-27B UD-Q4_K_XL
-            command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -4bit -ctx {context}{kv8}{mtp}
+            command: cd ~/Llama && ./run-qwen3.8-27b.sh -port 8000 -host 192.168.1.200 -4bit -ctx {context} -batch {batch}{kv8}{mtp}
           gemma-q8:         # + MTP drafter mtp-gemma-4-31B-it-Q8_0
             label: "Gemma-4-31B-it · 8 bit (UD-Q8_K_XL)"
             model: Gemma-4-31B-it UD-Q8_K_XL
-            command: cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -ctx {context}{kv8}{mtp}
+            command: cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -ctx {context} -batch {batch}{kv8}{mtp}
           gemma-q4:         # + MTP drafter mtp-gemma-4-31B-it-Q4_0
             label: "Gemma-4-31B-it · 4 bit (QAT UD-Q4_K_XL)"
             model: Gemma-4-31B-it QAT UD-Q4_K_XL
-            command: cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit -ctx {context}{kv8}{mtp}
+            command: cd ~/Llama && ./run-gemma-4-31b.sh -port 8000 -host 192.168.1.200 -qat4bit -ctx {context} -batch {batch}{kv8}{mtp}
         options:            # the {…} in the commands above
           context:          # tokens: the radio buttons show the ids
             legend: Context
@@ -75,6 +75,14 @@ tabs:
             description: Disable it to turn off speculative decoding.
             choices:
               "on": { value: " -no-mtp", label: "off" }
+          batch:
+            legend: Physical batch
+            description: "Prefill in chunks of this size: larger is faster for large prompts (more GPU memory)."
+            default: "2048"
+            choices:          # quoted: bare numbers are YAML integers, ids must be strings
+              "512": 512
+              "1024": 1024
+              "2048": 2048
         # -w: wait until it has exited (GPUs free); nothing running is not an error.
         stop: killall -q -w llama-server || true
         # Strata and llama-server use the same GPUs and port 8000: Run is refused
